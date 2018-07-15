@@ -229,9 +229,11 @@ cuda_py_test(
         "//tensorflow/python:framework_test_lib",
         "//tensorflow/python:function",
         "//tensorflow/python:resource_variable_ops",
+        "//tensorflow/python/compat:compat",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:iterator_ops",
     ],
+    tags = ["no_windows_gpu"],
 )
 
 py_test(

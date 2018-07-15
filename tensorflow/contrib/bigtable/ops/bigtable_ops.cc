@@ -23,6 +23,7 @@ REGISTER_OP("BigtableClient")
     .Attr("project_id: string")
     .Attr("instance_id: string")
     .Attr("connection_pool_size: int")
+    .Attr("max_receive_message_size: int = -1")
     .Attr("container: string = ''")
     .Attr("shared_name: string = ''")
     .Output("client: resource")
@@ -73,6 +74,16 @@ REGISTER_OP("BigtableRangeKeyDataset")
 
 REGISTER_OP("BigtableSampleKeysDataset")
     .Input("table: resource")
+    .Output("handle: variant")
+    .SetIsStateful()  // TODO(b/65524810): Source dataset ops must be marked
+                      // stateful to inhibit constant folding.
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("BigtableSampleKeyPairsDataset")
+    .Input("table: resource")
+    .Input("prefix: string")
+    .Input("start_key: string")
+    .Input("end_key: string")
     .Output("handle: variant")
     .SetIsStateful()  // TODO(b/65524810): Source dataset ops must be marked
                       // stateful to inhibit constant folding.
