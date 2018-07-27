@@ -704,6 +704,17 @@ cuda_py_test(
     ],
 )
 
+cuda_py_test(
+    name = "training_gpu_test",
+    size = "small",
+    srcs = ["engine/training_gpu_test.py"],
+    additional_deps = [
+        ":keras",
+        "//third_party/py/numpy",
+        "//tensorflow/python:client_testlib",
+    ],
+)
+
 py_test(
     name = "imagenet_utils_test",
     size = "small",
@@ -721,7 +732,6 @@ py_test(
     size = "medium",
     srcs = ["preprocessing/image_test.py"],
     srcs_version = "PY2AND3",
-    tags = ["nomsan"],  # TODO(b/110990716) reenable
     deps = [
         ":keras",
         "//tensorflow/python:client_testlib",

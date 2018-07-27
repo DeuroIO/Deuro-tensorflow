@@ -137,6 +137,14 @@ def if_not_mobile(a):
       "//conditions:default": a,
   })
 
+# Config setting selector used when building for products
+# which requires restricted licenses to be avoided.
+def if_not_lgpl_restricted(a):
+  _ = (a,)
+  return select({
+      "//conditions:default": [],
+  })
+
 def if_not_windows(a):
   return select({
       clean_dep("//tensorflow:windows"): [],
@@ -236,6 +244,7 @@ def tf_copts(android_optimization_level_override="-O2", is_external=False):
             clean_dep("//tensorflow:windows"): get_win_copts(is_external),
             clean_dep("//tensorflow:windows_msvc"): get_win_copts(is_external),
             clean_dep("//tensorflow:ios"): ["-std=c++11"],
+            clean_dep("//tensorflow:no_lgpl_deps"): ["-D__TENSORFLOW_NO_LGPL_DEPS__", "-pthread"],
             "//conditions:default": ["-pthread"]
       }))
 
@@ -540,9 +549,6 @@ def tf_gen_op_wrappers_cc(name,
 #     is invalid to specify both "hidden" and "op_whitelist".
 #   cc_linkopts: Optional linkopts to be added to tf_cc_binary that contains the
 #     specified ops.
-#   gen_locally: if True, the genrule to generate the Python library will be run
-#     without sandboxing. This would help when the genrule depends on symlinks
-#     which may not be supported in the sandbox.
 def tf_gen_op_wrapper_py(name,
                          out=None,
                          hidden=None,
@@ -553,8 +559,7 @@ def tf_gen_op_wrapper_py(name,
                          generated_target_name=None,
                          op_whitelist=[],
                          cc_linkopts=[],
-                         api_def_srcs=[],
-                         gen_locally=False):
+                         api_def_srcs=[]):
   if (hidden or hidden_file) and op_whitelist:
     fail('Cannot pass specify both hidden and op_whitelist.')
 
@@ -609,7 +614,6 @@ def tf_gen_op_wrapper_py(name,
         outs=[out],
         srcs=api_def_srcs + [hidden_file],
         tools=[tool_name] + tf_binary_additional_srcs(),
-        local = (1 if gen_locally else 0),
         cmd=("$(location " + tool_name + ") " + api_def_args_str +
              " @$(location " + hidden_file + ") " +
              ("1" if require_shape_functions else "0") + " > $@"))
@@ -619,7 +623,6 @@ def tf_gen_op_wrapper_py(name,
         outs=[out],
         srcs=api_def_srcs,
         tools=[tool_name] + tf_binary_additional_srcs(),
-        local = (1 if gen_locally else 0),
         cmd=("$(location " + tool_name + ") " + api_def_args_str + " " +
              op_list_arg + " " +
              ("1" if require_shape_functions else "0") + " " +
@@ -1351,7 +1354,7 @@ def tf_custom_op_library(name, srcs=[], gpu_srcs=[], deps=[], linkopts=[]):
       name=name,
       srcs=srcs,
       deps=deps + if_cuda(cuda_deps),
-      data=[name + "_check_deps"],
+      data=if_static([name + "_check_deps"]),
       copts=tf_copts(is_external=True),
       features = ["windows_export_all_symbols"],
       linkopts=linkopts + select({
@@ -1447,7 +1450,7 @@ def tf_py_wrap_cc(name,
       srcs=srcs,
       swig_includes=swig_includes,
       deps=deps + extra_deps,
-      toolchain_deps=["//tools/defaults:crosstool"],
+      toolchain_deps=["@bazel_tools//tools/cpp:current_cc_toolchain"],
       module_name=module_name,
       py_module_name=name)
   vscriptname=name+"_versionscript"

@@ -39,6 +39,72 @@ cc_test(
 )
 
 cc_library(
+    name = "delegate_data",
+    srcs = ["delegate_data.cc"],
+    hdrs = ["delegate_data.h"],
+    deps = [
+        ":buffer_map",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:lib",
+        "//tensorflow/core/common_runtime/eager:context",
+    ],
+)
+
+cc_test(
+    name = "delegate_data_test",
+    size = "small",
+    srcs = ["delegate_data_test.cc"],
+    tags = [
+        "no_oss",
+        "tflite_not_portable",
+    ],
+    deps = [
+        ":delegate_data",
+        "//tensorflow/contrib/lite:framework",
+        "//tensorflow/contrib/lite:util",
+        "//tensorflow/contrib/lite/testing:util",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "kernel",
+    srcs = ["kernel.cc"],
+    hdrs = ["kernel.h"],
+    deps = [
+        ":delegate_data",
+        ":util",
+        "//tensorflow/contrib/lite:framework",
+        "//tensorflow/contrib/lite:kernel_api",
+        "//tensorflow/contrib/lite/kernels:kernel_util",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/common_runtime/eager:context",
+        "//tensorflow/core/common_runtime/eager:execute",
+        "//tensorflow/core/common_runtime/eager:tensor_handle",
+        "@flatbuffers",
+    ],
+)
+
+cc_test(
+    name = "kernel_test",
+    size = "small",
+    srcs = ["kernel_test.cc"],
+    tags = [
+        "no_oss",
+        "tflite_not_portable",
+    ],
+    deps = [
+        ":delegate_data",
+        ":kernel",
+        "//tensorflow/contrib/lite/kernels:test_util",
+        "//tensorflow/contrib/lite/testing:util",
+        "@com_google_absl//absl/memory",
+        "@com_google_googletest//:gtest",
+        "@flatbuffers",
+    ],
+)
+
+cc_library(
     name = "util",
     srcs = ["util.cc"],
     hdrs = ["util.h"],

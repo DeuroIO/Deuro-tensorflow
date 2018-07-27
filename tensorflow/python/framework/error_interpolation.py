@@ -60,6 +60,8 @@ def _parse_message(message):
   Supported tags after node:<node_name>
     file: Replaced with the filename in which the node was defined.
     line: Replaced by the line number at which the node was defined.
+    colocations: Replaced by a multi-line message describing the file and
+        line numbers at which this node was colocated with other nodes.
 
   Args:
     message: String to parse
@@ -85,13 +87,100 @@ def _parse_message(message):
   return seps, tags
 
 
-def _get_field_dict_from_traceback(tf_traceback, frame_index):
-  """Convert traceback elements into interpolation dictionary and return."""
-  frame = tf_traceback[frame_index]
-  return {
-      "file": frame[tf_stack.TB_FILENAME],
-      "line": frame[tf_stack.TB_LINENO],
-  }
+def _compute_device_summary_from_list(device_assignment_list, prefix=""):
+  """Return a summary of an op's device function stack.
+
+  Args:
+    device_assignment_list: The op._device_assignments list.
+    prefix:  An optional string prefix used before each line of the multi-
+        line string returned by this function.
+
+  Returns:
+    A multi-line string similar to:
+        Device assignments active during op creation:
+          with tf.device(/cpu:0): <test_1.py:27>
+          with tf.device(some_func<foo.py, 123>): <test_2.py:38>
+    The first line will have no padding to its left by default.  Subsequent
+    lines will have two spaces of left-padding.  Use the prefix argument
+    to increase indentation.
+  """
+  if not device_assignment_list:
+    message = "No device assignments were active during op creation."
+    return prefix + message
+
+  str_list = []
+  str_list.append("%sDevice assignments active during op creation:" % prefix)
+
+  for traceable_obj in device_assignment_list:
+    location_summary = "<{file}:{line}>".format(file=traceable_obj.filename,
+                                                line=traceable_obj.lineno)
+    subs = {
+        "prefix": prefix,
+        "indent": "  ",
+        "dev_name": traceable_obj.obj,
+        "loc": location_summary,
+    }
+    str_list.append(
+        "{prefix}{indent}with tf.device({dev_name}): {loc}".format(**subs))
+
+  return "\n".join(str_list)
+
+
+def _compute_device_assignment_summary_from_op(op, prefix=""):
+  if not op:
+    return ""
+  # pylint: disable=protected-access
+  return _compute_device_summary_from_list(op._device_assignments, prefix)
+  # pylint: enable=protected-access
+
+
+def _compute_colocation_summary_from_dict(colocation_dict, prefix=""):
+  """Return a summary of an op's colocation stack.
+
+  Args:
+    colocation_dict: The op._colocation_dict.
+    prefix:  An optional string prefix used before each line of the multi-
+        line string returned by this function.
+
+  Returns:
+    A multi-line string similar to:
+        Node-device colocations active during op creation:
+          with tf.colocate_with(test_node_1): <test_1.py:27>
+          with tf.colocate_with(test_node_2): <test_2.py:38>
+    The first line will have no padding to its left by default.  Subsequent
+    lines will have two spaces of left-padding.  Use the prefix argument
+    to increase indentation.
+  """
+  if not colocation_dict:
+    message = "No node-device colocations were active during op creation."
+    return prefix + message
+
+  str_list = []
+  str_list.append("%sNode-device colocations active during op creation:"
+                  % prefix)
+
+  for name, location in colocation_dict.items():
+    location_summary = "<{file}:{line}>".format(file=location.filename,
+                                                line=location.lineno)
+    subs = {
+        "prefix": prefix,
+        "indent": "  ",
+        "name": name,
+        "loc": location_summary,
+    }
+    str_list.append(
+        "{prefix}{indent}with tf.colocate_with({name}): {loc}".format(**subs))
+
+  return "\n".join(str_list)
+
+
+def _compute_colocation_summary_from_op(op, prefix=""):
+  """Fetch colocation file, line, and nesting and return a summary string."""
+  if not op:
+    return ""
+  # pylint: disable=protected-access
+  return _compute_colocation_summary_from_dict(op._colocation_dict, prefix)
+  # pylint: enable=protected-access
 
 
 def _find_index_of_defining_frame_for_op(op):
@@ -125,6 +214,58 @@ def _find_index_of_defining_frame_for_op(op):
   return 0
 
 
+def _get_defining_frame_from_op(op):
+  """Find and return stack frame where op was defined."""
+  frame = None
+  if op:
+    # pylint: disable=protected-access
+    frame_index = _find_index_of_defining_frame_for_op(op)
+    frame = op._traceback[frame_index]
+    # pylint: enable=protected-access
+  return frame
+
+
+def _compute_field_dict(op):
+  """Return a dictionary mapping interpolation tokens to values.
+
+  Args:
+    op: op.Operation object having a _traceback member.
+
+  Returns:
+    A dictionary mapping string tokens to string values.  The keys are shown
+    below along with example values.
+    {
+      "file": "tool_utils.py",
+      "line": "124",
+      "colocations":
+          '''Node-device colocations active during op creation:
+               with tf.colocate_with(test_node_1): <test_1.py:27>
+               with tf.colocate_with(test_node_2): <test_2.py:38>'''
+    }
+    If op is None or lacks a _traceback field, the returned values will be
+    "<NA>".
+  """
+  default_value = "<NA>"
+  field_dict = {
+      "file": default_value,
+      "line": default_value,
+      "colocations": default_value,
+      "devices": default_value,
+  }
+  frame = _get_defining_frame_from_op(op)
+  if frame:
+    field_dict["file"] = frame[tf_stack.TB_FILENAME]
+    field_dict["line"] = frame[tf_stack.TB_LINENO]
+  colocation_summary = _compute_colocation_summary_from_op(op)
+  if colocation_summary:
+    field_dict["colocations"] = colocation_summary
+  device_summary = _compute_device_assignment_summary_from_op(op)
+  if device_summary:
+    field_dict["devices"] = device_summary
+
+  return field_dict
+
+
 def interpolate(error_message, graph):
   """Interpolates an error message.
 
@@ -143,24 +284,14 @@ def interpolate(error_message, graph):
 
   node_name_to_substitution_dict = {}
   for name in [t.name for t in tags]:
+    if name in node_name_to_substitution_dict:
+      continue
     try:
       op = graph.get_operation_by_name(name)
     except KeyError:
       op = None
 
-    if op:
-      frame_index = _find_index_of_defining_frame_for_op(op)
-      # pylint: disable=protected-access
-      field_dict = _get_field_dict_from_traceback(op._traceback, frame_index)
-      # pylint: enable=protected-access
-    else:
-      field_dict = {
-          "file": "<NA>",
-          "line": "<NA>",
-          "func": "<NA>",
-          "code": None,
-      }
-    node_name_to_substitution_dict[name] = field_dict
+    node_name_to_substitution_dict[name] = _compute_field_dict(op)
 
   subs = [
       string.Template(tag.format).safe_substitute(
