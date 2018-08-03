@@ -322,6 +322,7 @@ port::Status GetLoadedCudnnVersion(CudnnVersion* version) {
 CudnnSupport::CudnnSupport(CUDAExecutor* parent) : parent_(parent) {}
 
 port::Status CudnnSupport::Init() {
+  ScopedActivateExecutorContext context(parent_);
   cudnnHandle_t cudnn_handle = nullptr;
   auto status = cudnnCreate(&cudnn_handle);
   if (status == CUDNN_STATUS_SUCCESS) {
@@ -3081,8 +3082,7 @@ port::Status CudnnSupport::DoConvolveBackwardDataImpl(
   }
 
   // Cudnn 7.1.4 has a bug if the workspace of the following convolution is not
-  // zero-initialized.
-  // TODO(timshen): Add an nvbugs/ link.
+  // zero-initialized, nvbugs/2254619.
   if (CUDNN_VERSION >= 7000 &&
       algorithm_config.algorithm().algo_id() ==
           CUDNN_CONVOLUTION_BWD_DATA_ALGO_1 &&

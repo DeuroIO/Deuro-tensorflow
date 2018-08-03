@@ -31,20 +31,13 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-using stream_executor::dnn::DataLayout;
-using stream_executor::dnn::FilterLayout;
-
-static bool IsVoltaOrLater(const se::StreamExecutor& stream_executor) {
-  int major, minor;
-  CHECK(stream_executor.GetDeviceDescription().cuda_compute_capability(&major,
-                                                                       &minor));
-  return major >= 7;
-}
+using se::dnn::DataLayout;
+using se::dnn::FilterLayout;
 
 // Returns (input, filter, output) layouts.
 static std::tuple<DataLayout, FilterLayout, DataLayout>
 HeuristicLayoutAssignment(const HloInstruction* instr,
-                          stream_executor::StreamExecutor* stream_executor) {
+                          se::StreamExecutor* stream_executor) {
   // DataLayout and FilterLayout uses weird enum names. Translations:
   //   N <=> Batch or Output
   //   C <=> Depth or Input
@@ -72,14 +65,20 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
   VLOG(2) << "Using heuristic to figure out layouts for " << instr->ToString();
 
   // Empirically we've found with Volta and cudnn 7 that backward-input convs
-  // with stride are significantly faster with input in NHWC and filter/output
-  // in NCHW.
+  // with stride are significantly faster with NCHW layouts.
+  //
+  // We could have used a mixed layout combination, e.g. (NHWC, NCHW, NCHW),
+  // which on paper gives good performance. However, there are two observations:
+  // * a mixed layout combination is more cuDNN-bug prone, based on empirical
+  //   envidence.
+  // * we've also observed that for mixed layouts, cuDNN transposes data back
+  //   and forth from a different layout combination. If we end up with
+  //   transposes anyway, we prefer to have them in XLA, as they can be fused.
+  // TODO(timshen): Figure out the exact condition. This may be achieved by
+  // auto-tuning layouts offline.
   if (instr->custom_call_target() == kCudnnConvBackwardInputCallTarget &&
       window_util::HasStride(instr->window())) {
-    return std::make_tuple(DataLayout::kBatchYXDepth,     // NHWC
-                           FilterLayout::kOutputInputYX,  // NCHW
-                           DataLayout::kBatchDepthYX      // NCHW
-    );
+    return kAllNCHW;
   }
 
   // For other Volta f16 convolutions, use NHWC.
@@ -176,6 +175,38 @@ Status GpuLayoutAssignment::AddBackendConstraints(
     if (IsCustomCallToDnnConvolution(*instruction)) {
       TF_RETURN_IF_ERROR(
           AddBackendConstraintsToDnnConvCustomCall(instruction, constraints));
+    }
+
+    // For batched dot we require the default layout.
+    // TODO(b/112111608): This is overly conservative, the only real restriction
+    // is that batch dimensions must be major.
+    if (instruction->opcode() == HloOpcode::kDot &&
+        ImplementedAsGemm(*instruction) &&
+        instruction->dot_dimension_numbers().lhs_batch_dimensions_size() > 0) {
+      // Verify that the batch dims come before the row and col dims.
+      const DotDimensionNumbers& dim_nums =
+          instruction->dot_dimension_numbers();
+      CHECK_EQ(dim_nums.lhs_batch_dimensions_size(),
+               dim_nums.rhs_batch_dimensions_size());
+      CHECK_EQ(dim_nums.lhs_batch_dimensions_size() + 2,
+               ShapeUtil::Rank(instruction->shape()));
+      for (int64 batch_dim : dim_nums.lhs_batch_dimensions()) {
+        CHECK_LT(batch_dim, ShapeUtil::Rank(instruction->shape()) - 2);
+      }
+
+      // Set both inputs and the output to default layout.
+      Shape op0_shape = instruction->operand(0)->shape();
+      LayoutUtil::SetToDefaultLayout(&op0_shape);
+      Shape op1_shape = instruction->operand(1)->shape();
+      LayoutUtil::SetToDefaultLayout(&op1_shape);
+      Shape output_shape = instruction->shape();
+      LayoutUtil::SetToDefaultLayout(&output_shape);
+      TF_RETURN_IF_ERROR(
+          constraints->SetOperandLayout(op0_shape, instruction, 0));
+      TF_RETURN_IF_ERROR(
+          constraints->SetOperandLayout(op1_shape, instruction, 1));
+      TF_RETURN_IF_ERROR(
+          constraints->SetInstructionLayout(output_shape, instruction));
     }
   }
   return Status::OK();
