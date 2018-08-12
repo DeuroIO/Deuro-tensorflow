@@ -761,6 +761,25 @@ ENTRY %Gather (input_tensor: f32[50,49,48,47,46], gather_indices: s64[10,9,8,7,5
 )"
 },
 {
+"scatter",
+R"(HloModule StringifyScatter
+
+%add_F32.v3 (lhs: f32[], rhs: f32[]) -> f32[] {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %add = f32[] add(f32[] %lhs, f32[] %rhs)
+}
+
+ENTRY %Scatter (input_tensor: f32[50,49,48,47,46], scatter_indices: s64[10,9,8,7,5], updates: f32[10,9,8,7,30,29,28,27,26]) -> f32[50,49,48,47,46] {
+  %input_tensor = f32[50,49,48,47,46]{4,3,2,1,0} parameter(0)
+  %scatter_indices = s64[10,9,8,7,5]{4,3,2,1,0} parameter(1)
+  %updates = f32[10,9,8,7,30,29,28,27,26]{8,7,6,5,4,3,2,1,0} parameter(2)
+  ROOT %scatter = f32[50,49,48,47,46]{4,3,2,1,0} scatter(f32[50,49,48,47,46]{4,3,2,1,0} %input_tensor, s64[10,9,8,7,5]{4,3,2,1,0} %scatter_indices, f32[10,9,8,7,30,29,28,27,26]{8,7,6,5,4,3,2,1,0} %updates), update_window_dims={4,5,6,7,8}, inserted_window_dims={}, scatter_dims_to_operand_dims={0,1,2,3,4}, index_vector_dim=4, to_apply=%add_F32.v3
+}
+
+)"
+},
+{
   "ConstantUnsignedNoUnderflow",
   R"(HloModule ConstantUnsignedNoUnderflow_module
 
@@ -1049,6 +1068,30 @@ add {
 ENTRY CrossReplicaSumWithSubgroups {
   input = f32[128,32]{0,1} parameter(0)
   ROOT cross-replica-sum = f32[128,32]{0,1} cross-replica-sum(input), replica_group_ids={0,0,1,1}, barrier="abc", to_apply=add
+}
+
+)"
+},
+// all-to-all
+{
+"AllToAll",
+R"(HloModule AllToAll
+
+ENTRY AllToAll {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT a2a = f32[128,32]{0,1} all-to-all(input), replica_groups={}
+}
+
+)"
+},
+// all-to-all with subgroups
+{
+"AllToAllWithSubgroups",
+R"(HloModule AllToAllWithSubgroups
+
+ENTRY AllToAllWithSubgroups {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT a2a = f32[128,32]{0,1} all-to-all(input), replica_groups={{1,2},{3,0}}, barrier="abc"
 }
 
 )"

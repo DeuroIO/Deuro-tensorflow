@@ -2037,6 +2037,7 @@ cc_library(
         "//tensorflow:freebsd": [],
         "//tensorflow:windows": [],
         "//tensorflow:windows_msvc": [],
+        "//tensorflow:android": [],
         "//conditions:default": [
             "-ldl",
             "-lpthread",
@@ -3236,6 +3237,7 @@ tf_cc_tests(
         "platform/fingerprint_test.cc",
         "platform/integral_types_test.cc",
         "platform/logging_test.cc",
+        "platform/mutex_test.cc",
         "platform/net_test.cc",
         "platform/port_test.cc",
         "platform/profile_utils/cpu_utils_test.cc",
@@ -4580,6 +4582,8 @@ filegroup(
         # PNG data
         "lib/png/testdata/lena_gray.png",
         "lib/png/testdata/lena_rgba.png",
+        "lib/png/testdata/lena_palette.png",
+        "lib/png/testdata/lena_palette_trns.png",
         # JPEG data
         "lib/jpeg/testdata/jpeg_merge_test1.jpg",
         "lib/jpeg/testdata/jpeg_merge_test1_cmyk.jpg",

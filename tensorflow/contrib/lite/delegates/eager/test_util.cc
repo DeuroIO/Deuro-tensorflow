@@ -16,21 +16,12 @@ limitations under the License.
 #include "tensorflow/contrib/lite/delegates/eager/test_util.h"
 
 #include "absl/memory/memory.h"
-#include "third_party/flatbuffers/include/flatbuffers/flexbuffers.h"
+#include "flatbuffers/flexbuffers.h"
+#include "tensorflow/contrib/lite/string.h"
 
 namespace tflite {
 namespace eager {
 namespace testing {
-
-namespace {
-// These are used as custom_names in TFLite ops, so they need to be static.
-// Names need to start with "Eager" in order to work with the Eager delegate
-// requirements.
-static constexpr char kIdentityName[] = "EagerIdentity";
-static constexpr char kUnpackName[] = "EagerUnpack";
-static constexpr char kAddName[] = "EagerAdd";
-static constexpr char kMulName[] = "EagerMul";
-}  // namespace
 
 bool EagerModelTest::Invoke() { return interpreter_->Invoke() == kTfLiteOk; }
 
@@ -113,16 +104,16 @@ void EagerModelTest::AddTfOp(TfOpType op, const std::vector<int>& inputs,
   if (op == kUnpack) {
     string attributes = attr("T", "type: DT_FLOAT") + attr("num", "i: 2") +
                         attr("axis", "i: 0");
-    AddTfOp(kUnpackName, "Unpack", attributes, inputs, outputs);
+    AddTfOp("EagerUnpack", "Unpack", attributes, inputs, outputs);
   } else if (op == kIdentity) {
     string attributes = attr("T", "type: DT_FLOAT");
-    AddTfOp(kIdentityName, "Identity", attributes, inputs, outputs);
+    AddTfOp("EagerIdentity", "Identity", attributes, inputs, outputs);
   } else if (op == kAdd) {
     string attributes = attr("T", "type: DT_FLOAT");
-    AddTfOp(kAddName, "Add", attributes, inputs, outputs);
+    AddTfOp("EagerAdd", "Add", attributes, inputs, outputs);
   } else if (op == kMul) {
     string attributes = attr("T", "type: DT_FLOAT");
-    AddTfOp(kMulName, "Mul", attributes, inputs, outputs);
+    AddTfOp("EagerMul", "Mul", attributes, inputs, outputs);
   } else if (op == kNonExistent) {
     AddTfOp("NonExistentOp", "NonExistentOp", "", inputs, outputs);
   } else if (op == kIncompatibleNodeDef) {

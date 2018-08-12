@@ -160,6 +160,7 @@ cc_library(
         "//tensorflow/compiler/jit/ops:xla_ops",
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/compiler/tf2xla:dump_graph",
+        "//tensorflow/compiler/tf2xla:tf2xla_util",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla/kernels:xla_ops",
         "//tensorflow/compiler/xla:util",
@@ -178,6 +179,7 @@ cc_library(
         "//tensorflow/core/kernels:constant_op",
         "//tensorflow/core/kernels:control_flow_ops",
         "//tensorflow/core/kernels:fifo_queue",
+        "//tensorflow/core/kernels:function_ops",
         "//tensorflow/core/kernels:identity_n_op",
         "//tensorflow/core/kernels:identity_op",
         "//tensorflow/core/kernels:no_op",
@@ -186,6 +188,9 @@ cc_library(
         "//tensorflow/core/kernels:sendrecv_ops",
         "//tensorflow/core/kernels:shape_ops",
         "//tensorflow/core/kernels:variable_ops",
+        "//tensorflow/core/kernels/data:generator_dataset_op",
+        "//tensorflow/core/kernels/data:iterator_ops",
+        "//tensorflow/core/kernels/data:prefetch_dataset_op",
     ],
 )
 
@@ -302,22 +307,6 @@ tf_cc_test(
 )
 
 cc_library(
-    name = "deadness_analysis_internal",
-    testonly = True,
-    srcs = [
-        "deadness_analysis.cc",
-    ],
-    hdrs = [
-        "deadness_analysis.h",
-        "deadness_analysis_internal.h",
-    ],
-    deps = [
-        "//tensorflow/core:graph",
-        "//tensorflow/core:lib",
-    ],
-)
-
-cc_library(
     name = "compilation_passes",
     srcs = [
         "build_xla_launch_ops_pass.cc",
@@ -398,11 +387,12 @@ tf_cc_test(
     name = "deadness_analysis_test",
     size = "small",
     srcs = [
+        "deadness_analysis_internal.h",
         "deadness_analysis_test.cc",
     ],
     deps = [
         ":common",
-        ":deadness_analysis_internal",
+        ":compilation_passes",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/cc:cc_ops_internal",
         "//tensorflow/cc:function_ops",
@@ -414,6 +404,7 @@ tf_cc_test(
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
+        "//tensorflow/core:graph",
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
