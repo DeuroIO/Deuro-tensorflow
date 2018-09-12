@@ -41,10 +41,10 @@ from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import random_seed
 from tensorflow.python.framework import tensor_util
+from tensorflow.python.keras import metrics
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import metrics as metrics_lib
-from tensorflow.python.ops import resources
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import gfile
 from tensorflow.python.platform import tf_logging as logging
@@ -1297,10 +1297,12 @@ class Estimator(object):
         scaffold = _combine_distributed_scaffold(
             grouped_estimator_spec.scaffold, self._train_distribution)
 
+        # TODO(yuefengz): add a test for unwrapping per_device_hooks.
         def get_hooks_from_the_first_device(per_device_hooks):
-          hooks_list = self._train_distribution.unwrap(per_device_hooks)
-          assert hooks_list
-          return hooks_list[0]
+          return [
+              self._distribution.unwrap(per_device_hook)[0]
+              for per_device_hook in per_device_hooks
+          ]
 
         training_hooks = get_hooks_from_the_first_device(
             grouped_estimator_spec.training_hooks)
@@ -1606,21 +1608,6 @@ def maybe_overwrite_model_dir_and_session_config(config, model_dir):
   return config
 
 
-def create_per_tower_ready_op(scaffold):
-  """Create a `tf.train.Scaffold.ready_op` inside a tower."""
-  if scaffold.ready_op:
-    return scaffold.ready_op
-
-  def default_ready_op():
-    return array_ops.concat([
-        variables.report_uninitialized_variables(),
-        resources.report_uninitialized_resources()
-    ], 0)
-
-  return monitored_session.Scaffold.get_or_default(
-      'ready_op', ops.GraphKeys.READY_OP, default_ready_op)
-
-
 def create_per_tower_ready_for_local_init_op(scaffold):
   """Create a `tf.train.Scaffold.ready_for_local_init_op` inside a tower."""
   if scaffold.ready_for_local_init_op:
@@ -1670,11 +1657,9 @@ def _combine_distributed_scaffold(grouped_scaffold, distribution):
     return value[0]
 
   ready_op = distribution.call_for_each_tower(
-      create_per_tower_ready_op, grouped_scaffold)
+      lambda scaffold: scaffold.ready_op, grouped_scaffold)
   if ready_op is not None:
     ready_op = _unwrap_and_concat(ready_op)
-  else:
-    ready_op = None
 
   ready_for_local_init_op = distribution.call_for_each_tower(
       create_per_tower_ready_for_local_init_op, grouped_scaffold)
@@ -1802,19 +1787,21 @@ def _extract_metric_update_ops(eval_dict, distribution=None):
   update_ops = []
   value_ops = {}
   # Sort metrics lexicographically so graph is identical every time.
-  for name, metric_ops in sorted(six.iteritems(eval_dict)):
-    value_ops[name] = metric_ops[0]
-    if distribution:
-      update_op = distribution.group(metric_ops[1])
+  for name, value in sorted(six.iteritems(eval_dict)):
+    if isinstance(value, metrics.Metric):
+      metric_result = value.result()
+      # We expect only one update op for every metric when there is no
+      # distribution strategy.
+      metric_update = value.updates if distribution else value.updates[0]
     else:
-      update_op = metric_ops[1]
-    update_ops.append(update_op)
+      metric_result = value[0]
+      metric_update = value[1]
 
-  if update_ops:
-    update_op = control_flow_ops.group(*update_ops)
-  else:
-    update_op = None
+    value_ops[name] = metric_result
+    update_ops.append(
+        distribution.group(metric_update) if distribution else metric_update)
 
+  update_op = control_flow_ops.group(*update_ops) if update_ops else None
   return update_op, value_ops
 
 
@@ -2069,7 +2056,7 @@ class WarmStartSettings(
     var_name_to_vocab_info: [Optional] Dict of variable names (strings) to
       `tf.estimator.VocabInfo`. The variable names should be "full" variables,
       not the names of the partitions.  If not explicitly provided, the variable
-      is assumed to have no vocabulary.
+      is assumed to have no (changes to) vocabulary.
     var_name_to_prev_var_name: [Optional] Dict of variable names (strings) to
       name of the previously-trained variable in `ckpt_to_initialize_from`. If
       not explicitly provided, the name of the variable is assumed to be same

@@ -55,6 +55,7 @@ from tensorflow.python.platform import app
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util import compat
 from tensorflow.python.util import decorator_utils
+from tensorflow.python.util import deprecation
 from tensorflow.python.util import function_utils
 from tensorflow.python.util import lock_util
 from tensorflow.python.util import tf_contextlib
@@ -799,6 +800,19 @@ class _EagerTensorBase(Tensor):
 
     Returns:
       Integer rank
+    """
+    raise NotImplementedError()
+
+  def _num_elements(self):
+    """Number of elements of this Tensor.
+
+    Unlike regular Tensors, the number of elements is always known for
+    EagerTensors.
+
+    This is more performant than tensor.shape.num_elements
+
+    Returns:
+      Long - num elements in the tensor
     """
     raise NotImplementedError()
 
@@ -5350,6 +5364,7 @@ def enable_eager_execution(config=None,
   computational graph).
 
   For example:
+
   ```python
   tf.enable_eager_execution()
 
@@ -5399,7 +5414,7 @@ def enable_eager_execution(config=None,
      TensorFlow graph, or if options provided conflict with a previous call
      to this function.
   """
-  if context._default_mode != context.EAGER_MODE:  # pylint: disable=protected-access
+  if context.default_execution_mode != context.EAGER_MODE:
     return enable_eager_execution_internal(
         config=config,
         device_policy=device_policy,
@@ -5442,15 +5457,15 @@ def enable_eager_execution_internal(config=None,
     raise ValueError(
         "execution_mode must be one of None, tf.contrib.eager.SYNC, "
         "tf.contrib.eager.ASYNC")
-  # pylint: disable=protected-access
-  if context._default_mode == context.GRAPH_MODE:
+  if context.default_execution_mode == context.GRAPH_MODE:
     graph_mode_has_been_used = (
         _default_session_stack.stack
         or len(get_default_graph().get_operations()) > 0)  # pylint: disable=g-explicit-length-test
     if graph_mode_has_been_used:
       raise ValueError(
           "tf.enable_eager_execution must be called at program startup.")
-  context._default_mode = context.EAGER_MODE
+  context.default_execution_mode = context.EAGER_MODE
+  # pylint: disable=protected-access
   if context._context is None:
     context._context = context.Context(
         config=config,
@@ -5794,11 +5809,8 @@ class GraphKeys(object):
   _STREAMING_MODEL_PORTS = "streaming_model_ports"
 
   @decorator_utils.classproperty
+  @deprecation.deprecated(None, "Use `tf.GraphKeys.GLOBAL_VARIABLES` instead.")
   def VARIABLES(cls):  # pylint: disable=no-self-argument
-    logging.log_first_n(logging.WARN,
-                        "VARIABLES collection name is deprecated, please use "
-                        "GLOBAL_VARIABLES instead; VARIABLES will be removed "
-                        "after 2017-03-02.", 1)
     return cls.GLOBAL_VARIABLES
 
 

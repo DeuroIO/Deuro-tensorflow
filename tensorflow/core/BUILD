@@ -168,6 +168,7 @@ COMMON_PROTO_SRCS = [
     "example/example.proto",
     "example/feature.proto",
     "framework/allocation_description.proto",
+    "framework/api_def.proto",
     "framework/attr_value.proto",
     "framework/cost_graph.proto",
     "framework/device_attributes.proto",
@@ -177,9 +178,9 @@ COMMON_PROTO_SRCS = [
     "framework/iterator.proto",
     "framework/kernel_def.proto",
     "framework/log_memory.proto",
+    "framework/model.proto",
     "framework/node_def.proto",
     "framework/op_def.proto",
-    "framework/api_def.proto",
     "framework/reader_base.proto",
     "framework/remote_fused_graph_execute_info.proto",
     "framework/resource_handle.proto",
@@ -612,6 +613,7 @@ cc_library(
     copts = tf_copts(),
     deps = tf_lib_proto_parsing_deps() + [
         ":platform_base",
+        "@com_google_absl//absl/strings",
         "@double_conversion//:double-conversion",
     ],
 )
@@ -694,6 +696,24 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":lib_internal",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:optional",
+    ],
+)
+
+cc_library(
+    name = "feature_util",
+    srcs = ["example/feature_util.cc"],
+    hdrs = [
+        "example/feature_util.h",
+        "platform/types.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core_stringpiece",
+        ":platform_protobuf",
+        ":protos_all_cc",
     ],
 )
 
@@ -701,6 +721,7 @@ cc_library(
     name = "abi",
     srcs = ["platform/abi.cc"],
     hdrs = ["platform/abi.h"],
+    deps = [":platform_base"],
 )
 
 cc_library(
@@ -730,10 +751,12 @@ cc_library(
 # required to use tf_cc_test, and that rule will change / into _
 cc_library(
     name = "core_stringpiece",
-    srcs = ["lib/core/stringpiece.cc"],
     hdrs = ["lib/core/stringpiece.h"],
     copts = tf_copts(),
-    deps = [":platform_base"],
+    deps = [
+        ":platform_base",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 # Test support library needed for all tests
@@ -818,6 +841,7 @@ tf_cuda_library(
         "framework/log_memory.h",
         "framework/lookup_interface.h",
         "framework/memory_types.h",
+        "framework/model.h",
         "framework/node_def_builder.h",
         "framework/node_def_util.h",
         "framework/numeric_op.h",
@@ -868,7 +892,6 @@ tf_cuda_library(
         "util/sparse/sparse_tensor.h",
         "util/stat_summarizer.h",
         "util/stat_summarizer_options.h",
-        "util/status_util.h",
         "util/stream_executor_util.h",
         "util/strided_slice_op.h",
         "util/tensor_format.h",
@@ -932,15 +955,6 @@ cc_library(
 cc_library(
     name = "ptr_util",
     hdrs = ["util/ptr_util.h"],
-)
-
-cc_library(
-    name = "status_util",
-    hdrs = ["util/status_util.h"],
-    deps = [
-        ":graph",
-        ":lib",
-    ],
 )
 
 cc_library(
@@ -1343,6 +1357,7 @@ cc_library(
         "//tensorflow/core/kernels:mkl_relu_op",
         "//tensorflow/core/kernels:mkl_reshape_op",
         "//tensorflow/core/kernels:mkl_softmax_op",
+        "//tensorflow/core/kernels:mkl_transpose_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
         "//tensorflow/core/kernels:mkl_aggregate_ops",
     ]) + if_cuda([
@@ -1589,7 +1604,9 @@ cc_library(
 
 cc_library(
     name = "mobile_additional_lib_deps",
-    deps = tf_additional_lib_deps(),
+    deps = tf_additional_lib_deps() + [
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 # Native library support for iOS applications.
@@ -2067,6 +2084,7 @@ cc_library(
         ],
     }),
     deps = tf_additional_lib_deps() + [
+        "@com_google_absl//absl/strings",
         "//third_party/eigen3",
         "//tensorflow/core/platform/default/build_config:platformlib",
     ] + if_static([":lib_internal_impl"]),
@@ -2084,7 +2102,6 @@ cc_library(
         exclude = [
             "**/*test*",
             "framework/variant.cc",
-            "lib/core/stringpiece.cc",
             "lib/hash/crc32c_accelerate.cc",
             "lib/gif/**/*",
             "lib/jpeg/**/*",
@@ -2099,7 +2116,6 @@ cc_library(
     ) + tf_additional_lib_srcs(
         exclude = [
             "**/*test*",
-            "lib/core/stringpiece.cc",
             "platform/**/cuda.h",
             "platform/**/cuda_libdevice_path.cc",
             "platform/**/stream_executor.h",
@@ -2210,6 +2226,7 @@ cc_library(
         ":lib",
         ":lib_internal",
         "//tensorflow/core/platform/default/build_config:png",
+        "@com_google_absl//absl/strings",
         "@zlib_archive//:zlib",
     ],
 )
@@ -2225,7 +2242,7 @@ cc_library(
         "platform/macros.h",
         "platform/platform.h",
         "platform/types.h",
-    ],
+    ] + if_windows(["platform/windows/integral_types.h"]),
     copts = tf_copts(),
     linkopts = ["-ldl"],
     deps = [
@@ -2260,6 +2277,7 @@ cc_library(
     deps = [
         "//tensorflow/core/platform/default/build_config:jpeg",
         "//tensorflow/core/platform/default/build_config:logging",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -2291,6 +2309,7 @@ cc_library(
     deps = [
         "//tensorflow/core/platform/default/build_config:gif",
         "//tensorflow/core/platform/default/build_config:logging",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -2318,6 +2337,7 @@ cc_library(
     linkopts = ["-ldl"],
     deps = [
         "//tensorflow/core/platform/default/build_config:logging",
+        "@com_google_absl//absl/strings",
         "@png_archive//:png",
     ],
 )
@@ -2462,6 +2482,7 @@ tf_cuda_library(
 
 cc_header_only_library(
     name = "framework_internal_headers_lib",
+    includes = ["../../external/com_google_absl"],
     deps = [
         ":lib",
         ":lib_internal",
@@ -2546,6 +2567,11 @@ tf_cuda_library(
 
 cc_header_only_library(
     name = "framework_headers_lib",
+    extra_deps = [
+        # ABSL headers get dropped, so we add them back here.
+        "@com_google_absl//absl/strings",
+    ],
+    includes = ["../../external/com_google_absl"],
     visibility = ["//visibility:public"],
     deps = [
         ":framework",
@@ -2555,6 +2581,7 @@ cc_header_only_library(
 
 cc_header_only_library(
     name = "stream_executor_headers_lib",
+    includes = ["../../external/com_google_absl"],
     visibility = ["//visibility:public"],
     deps = [
         ":stream_executor",
@@ -2726,6 +2753,7 @@ CORE_CPU_LIB_HEADERS = CORE_CPU_BASE_HDRS + [
     "common_runtime/graph_optimizer.h",
     "common_runtime/local_device.h",
     "common_runtime/lower_if_op.h",
+    "common_runtime/lower_while_op.h",
     "common_runtime/memory_types.h",
     "common_runtime/mkl_cpu_allocator.h",
     "common_runtime/optimization_registry.h",
@@ -2782,6 +2810,7 @@ tf_cuda_library(
         "common_runtime/hierarchical_tree_broadcaster.cc",
         "common_runtime/local_device.cc",
         "common_runtime/lower_if_op.cc",
+        "common_runtime/lower_while_op.cc",
         "common_runtime/memory_types.cc",
         "common_runtime/mkl_cpu_allocator.cc",
         "common_runtime/optimization_registry.cc",
@@ -3206,18 +3235,15 @@ tf_cc_tests(
         "lib/core/status_test.cc",
         "lib/core/stringpiece_test.cc",
         "lib/core/threadpool_test.cc",
-        "lib/gtl/array_slice_test.cc",
         "lib/gtl/cleanup_test.cc",
         "lib/gtl/compactptrset_test.cc",
         "lib/gtl/edit_distance_test.cc",
         "lib/gtl/flatmap_test.cc",
         "lib/gtl/flatset_test.cc",
-        "lib/gtl/inlined_vector_test.cc",
         "lib/gtl/int_type_test.cc",
         "lib/gtl/iterator_range_test.cc",
         "lib/gtl/manual_constructor_test.cc",
         "lib/gtl/map_util_test.cc",
-        "lib/gtl/optional_test.cc",
         "lib/gtl/top_n_test.cc",
         "lib/hash/crc32c_test.cc",
         "lib/hash/hash_test.cc",
@@ -3543,7 +3569,6 @@ tf_cc_tests(
         "util/semver_test.cc",
         "util/sparse/sparse_tensor_test.cc",
         "util/stat_summarizer_test.cc",
-        "util/status_util_test.cc",
         "util/tensor_format_test.cc",
         "util/tensor_slice_reader_test.cc",
         "util/tensor_slice_set_test.cc",
@@ -3568,7 +3593,6 @@ tf_cc_tests(
         ":ops",
         ":protos_all_cc",
         ":protos_test_cc",
-        ":status_util",
         ":test",
         ":test_main",
         ":testlib",
@@ -3707,6 +3731,7 @@ tf_cc_test_mkl(
         ":core_cpu_internal",
         ":framework",
         ":framework_internal",
+        ":lib",
         ":test",
         ":test_main",
         ":testlib",
@@ -4061,6 +4086,7 @@ tf_cuda_cc_test(
         ":testlib",
         "//third_party/eigen3",
         "//tensorflow/cc:cc_ops",
+        "//tensorflow/core/kernels:collective_ops",
         "//tensorflow/core/kernels:control_flow_ops",
         "//tensorflow/core/kernels:cwise_op",
         "//tensorflow/core/kernels:dense_update_ops",
@@ -4102,6 +4128,7 @@ tf_cc_test(
         "//tensorflow/cc:cc_ops",
         # Link with support for TensorFlow Debugger (tfdbg).
         "//tensorflow/core/debug",
+        "//tensorflow/core/kernels:collective_ops",
         "//tensorflow/core/kernels:control_flow_ops",
         "//tensorflow/core/kernels:cwise_op",
         "//tensorflow/core/kernels:dense_update_ops",
@@ -4567,6 +4594,29 @@ tf_cc_tests(
     name = "common_runtime_lower_if_op_test",
     size = "small",
     srcs = ["common_runtime/lower_if_op_test.cc"],
+    deps = [
+        ":all_kernels",
+        ":core_cpu",
+        ":core_cpu_internal",
+        ":direct_session",
+        ":framework",
+        ":framework_internal",
+        ":lib",
+        ":test",
+        ":test_main",
+        ":testlib",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/cc:function_ops",
+        "//tensorflow/cc:ops",
+    ],
+)
+
+tf_cc_tests(
+    name = "common_runtime_lower_while_op_test",
+    size = "small",
+    srcs = ["common_runtime/lower_while_op_test.cc"],
     deps = [
         ":all_kernels",
         ":core_cpu",
