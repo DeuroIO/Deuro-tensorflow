@@ -23,9 +23,9 @@ limitations under the License.
 #include <unordered_set>
 #include <vector>
 
-#ifdef TFLITE_EXTENDED
-#include "tensorflow/contrib/lite/delegates/eager/delegate.h"
-#endif  // TFLITE_EXTENDED
+#ifdef TFLITE_FLEX
+#include "tensorflow/contrib/lite/delegates/flex/delegate.h"
+#endif  // TFLITE_FLEX
 #include "tensorflow/contrib/lite/kernels/register.h"
 #include "tensorflow/contrib/lite/model.h"
 #include "tensorflow/contrib/lite/op_resolver.h"
@@ -247,6 +247,13 @@ void BenchmarkTfLiteModel::PrepareInputsAndOutputs() {
           interpreter->typed_tensor<float>(i),
           std::vector<int>(sizes.begin() + 1, sizes.end()),
           []() { return static_cast<float>(rand()) / RAND_MAX - 0.5f; });
+    } else if (t->type == kTfLiteInt32) {
+      // TODO(yunluli): This is currently only used for handling embedding input
+      // for speech models. Generalize if necessary.
+      FillRandomValue<int32_t>(
+          interpreter->typed_tensor<int32_t>(i),
+          std::vector<int32_t>(sizes.begin() + 1, sizes.end()),
+          []() { return static_cast<int32_t>(rand()) % 100; });
     } else if (t->type == kTfLiteUInt8) {
       FillRandomValue<uint8_t>(
           interpreter->typed_tensor<uint8_t>(i),
@@ -298,14 +305,14 @@ void BenchmarkTfLiteModel::Init() {
 
   interpreter->UseNNAPI(use_nnapi);
 
-#ifdef TFLITE_EXTENDED
-  TFLITE_LOG(INFO) << "Instantiating Eager Delegate";
-  delegate_ = EagerDelegate::Create();
+#ifdef TFLITE_FLEX
+  TFLITE_LOG(INFO) << "Instantiating Flex Delegate";
+  delegate_ = FlexDelegate::Create();
   if (delegate_) {
     interpreter->ModifyGraphWithDelegate(delegate_.get(),
                                          /*allow_dynamic_tensors=*/true);
   }
-#endif  // TFLITE_EXTENDED
+#endif  // TFLITE_FLEX
 
   auto interpreter_inputs = interpreter->inputs();
 

@@ -20,11 +20,13 @@ from __future__ import division
 from __future__ import print_function
 import numpy as np
 from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import errors
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import callbacks as cbks
 from tensorflow.python.keras import optimizers
 from tensorflow.python.keras.engine import distributed_training_utils
+from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras.utils.generic_utils import Progbar
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
@@ -152,6 +154,9 @@ def fit_loop(
   assert steps_per_epoch is not None
 
   for epoch in range(initial_epoch, epochs):
+    # Reset stateful metrics
+    for m in model.stateful_metric_functions:
+      m.reset_states()
     callbacks.on_epoch_begin(epoch)
     epoch_logs = {}
     for step_index in range(steps_per_epoch):
@@ -170,8 +175,9 @@ def fit_loop(
       if not isinstance(outs, list):
         outs = [outs]
 
-      outs = _aggregate_metrics_across_towers(
-          current_strategy.num_towers, out_labels, outs)
+      outs = _aggregate_metrics_across_towers(current_strategy.num_towers,
+                                              out_labels,
+                                              model.stateful_metric_names, outs)
       for l, o in zip(out_labels, outs):
         batch_logs[l] = o
       callbacks.on_batch_end(step_index, batch_logs)
@@ -232,8 +238,6 @@ def _experimental_fit_loop(
   """
   current_strategy = model._distribution_strategy
 
-  # TODO(priyag): Add validation that shapes are fully defined for TPU case.
-
   K.get_session().run(current_strategy.initialize())
 
   def _per_device_train_function(model):
@@ -292,11 +296,16 @@ def _experimental_fit_loop(
   for name, tensor in zip(model.metrics_names[1:], model.metrics_tensors):
     initial_loop_values[name] = array_ops.zeros(tensor.shape, tensor.dtype)
 
+  if steps_per_epoch is None:
+    raise ValueError('steps_per_epoch should be specified in the fit call.')
+  steps_per_run_var = K.variable(
+      value=min(steps_per_epoch, current_strategy.steps_per_run),
+      dtype='int32',
+      name='steps_per_run_var')
+
   with current_strategy.scope():
-    # TODO(priyag, sourabhbajaj): Adjust steps_per_run appropriately based on
-    # steps_per_epoch and number of epochs.
     ctx = current_strategy.run_steps_on_dataset(
-        step_fn, iterator, iterations=current_strategy.steps_per_run,
+        step_fn, iterator, iterations=steps_per_run_var,
         initial_loop_values=initial_loop_values)
 
   train_op = ctx.run_op
@@ -308,14 +317,6 @@ def _experimental_fit_loop(
     distributed_model = current_strategy.unwrap(model._grouped_model)[0]
     distributed_training_utils.set_weights(
         current_strategy, distributed_model, orig_model_weights)
-
-  assert steps_per_epoch is not None
-
-  # TODO(sourabhbajaj): Convert this into a proper validation function
-  if callbacks:
-    raise NotImplementedError(
-        'Callbacks are not supported with TPUStrategy right now.')
-
   callbacks = cbks.configure_callbacks(
       callbacks,
       model,
@@ -326,17 +327,26 @@ def _experimental_fit_loop(
       steps_per_epoch=steps_per_epoch,
       verbose=verbose)
   # TODO(priyag, sourabhbajaj): Add callbacks support for per step callback
-  # TODO(priyag, sourabhbajaj): Fix the number of steps run with steps_per_run
   # TODO(priyag, sourabhbajaj): Add validation.
+
+  # Calculate the steps each time on the device.
+  steps_to_run = [current_strategy.steps_per_run] * (
+      steps_per_epoch // current_strategy.steps_per_run)
+  if steps_per_epoch % current_strategy.steps_per_run:
+    steps_to_run.append(steps_per_epoch % current_strategy.steps_per_run)
+
   callbacks.on_train_begin()
   for epoch in range(initial_epoch, epochs):
     callbacks.on_epoch_begin(epoch)
     epoch_logs = {}
-    for step_index in range(0, steps_per_epoch, current_strategy.steps_per_run):
-      # TODO(sourabhbajaj): Replace size with a combination of steps_per_run
-      # and batch_size
-      batch_logs = {'batch': step_index, 'size': 1}
+    step_index = 0
+    prev_step_count = None
+    for step_count in steps_to_run:
+      batch_logs = {'batch': step_index, 'size': 1, 'num_steps': step_count}
       callbacks.on_batch_begin(step_index, batch_logs)
+      if prev_step_count is None or step_count != prev_step_count:
+        steps_per_run_var.load(step_count, K.get_session())
+        prev_step_count = step_count
       try:
         _, outputs = K.get_session().run([train_op, output_tensors])
       except errors.OutOfRangeError:
@@ -349,6 +359,7 @@ def _experimental_fit_loop(
 
       batch_logs.update(outputs)
       callbacks.on_batch_end(step_index, batch_logs)
+      step_index = step_index + step_count
       if callbacks.model.stop_training:
         break
 
@@ -431,6 +442,13 @@ def test_loop(model, iterator, verbose=0, steps=None):
   else:
     ins = dataset_inputs + dataset_targets
 
+  for m in model.stateful_metric_functions:
+    m.reset_states()
+  stateful_metric_indices = [
+      i for i, name in enumerate(model.metrics_names)
+      if str(name) in model.stateful_metric_names
+  ]
+
   outs = []
   if verbose == 1:
     progbar = Progbar(target=steps)
@@ -446,12 +464,16 @@ def test_loop(model, iterator, verbose=0, steps=None):
   for step in range(steps):
     batch_outs = distributed_test_function(ins)
     batch_outs = _aggregate_metrics_across_towers(
-        current_strategy.num_towers, model.metrics_names, batch_outs)
+        current_strategy.num_towers, model.metrics_names,
+        model.stateful_metric_names, batch_outs)
     if isinstance(batch_outs, list):
       if step == 0:
         outs = [0.] * len(batch_outs)
       for i, batch_out in enumerate(batch_outs):
-        outs[i] += batch_out
+        if i in stateful_metric_indices:
+          outs[i] = batch_out
+        else:
+          outs[i] += batch_out
     else:
       if step == 0:
         outs.append(0.)
@@ -459,7 +481,8 @@ def test_loop(model, iterator, verbose=0, steps=None):
     if verbose >= 1:
       progbar.update(step + 1)
   for i in range(len(outs)):
-    outs[i] /= steps
+    if i not in stateful_metric_indices:
+      outs[i] /= steps
 
   if len(outs) == 1:
     return outs[0]
@@ -742,8 +765,9 @@ def _experimental_predict_loop(model, iterator, verbose=0, steps=None):
   for name, tensor in zip(model.output_names, model.outputs):
     # TODO(priyag): This is a workaround as we do not know the batch dimension
     # of the model's output at this point.
-    tensor.shape.dims = [batch_dimension] + tensor.shape.dims[1:]
-    initial_loop_values[name] = array_ops.zeros(tensor.shape, tensor.dtype)
+    shape = tensor_shape.TensorShape(tensor.shape.dims)
+    shape.dims = [batch_dimension] + shape.dims[1:]
+    initial_loop_values[name] = array_ops.zeros(shape, tensor.dtype)
 
   with current_strategy.scope():
     # TODO(priyag, sourabhbajaj): Support steps_per_run if/when we add outfeed.
@@ -809,10 +833,10 @@ def _clone_and_build_model(model, inputs=None, targets=None):
   cloned_model.compile(
       optimizer,
       model.loss,
-      metrics=model.metrics,
+      metrics=metrics_module.clone_metrics(model.metrics),
       loss_weights=model.loss_weights,
       sample_weight_mode=model.sample_weight_mode,
-      weighted_metrics=model.weighted_metrics,
+      weighted_metrics=metrics_module.clone_metrics(model.weighted_metrics),
       target_tensors=targets)
   return cloned_model
 
@@ -827,8 +851,9 @@ def clone_model_on_towers(
     model._make_callback_model()
 
 
-def _aggregate_metrics_across_towers(num_devices, out_labels, outs):
-  """Aggregate metrics values across all towers.
+def _aggregate_metrics_across_towers(num_devices, out_labels,
+                                     stateful_metric_names, outs):
+  """Aggregates stateless metrics values across towers.
 
   When using `MirroredStrategy`, the number of towers is equal to the
   number of devices over which training is distributed. This may not always be
@@ -837,6 +862,7 @@ def _aggregate_metrics_across_towers(num_devices, out_labels, outs):
   Args:
     num_devices: Number of devices over which the model is being distributed.
     out_labels: The list of metric names passed to `compile`.
+    stateful_metric_names: List of stateful metric names on the model.
     outs: The output from all the towers.
 
   Returns:
@@ -851,10 +877,16 @@ def _aggregate_metrics_across_towers(num_devices, out_labels, outs):
   # Each label in `out_labels` corresponds to one set of metrics. The
   # number of metric values corresponds to the number of devices. We
   # currently take the mean of the values.
-  for _ in out_labels[1:]:
-    m = np.mean(outs[current_index:current_index + num_devices])
-    merged_output.append(m)
-    current_index += num_devices
+  for metric_name in out_labels[1:]:
+    if metric_name in stateful_metric_names:
+      # For stateful metrics, we get one aggregated result value.
+      merged_output.append(outs[current_index])
+      current_index += 1
+    else:
+      m = np.mean(outs[current_index:current_index + num_devices])
+      merged_output.append(m)
+      current_index += num_devices
+
   return merged_output
 
 
