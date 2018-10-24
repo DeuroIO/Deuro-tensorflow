@@ -27,6 +27,7 @@ py_library(
         "//tensorflow/python:device_util",
         "//tensorflow/python:distribute",
         "//tensorflow/python:framework_ops",
+        "//tensorflow/python:resource_variable_ops",
         "//tensorflow/python:training",
         "//tensorflow/python:util",
         "//tensorflow/python/data/ops:multi_device_iterator_ops",
@@ -411,6 +412,24 @@ cuda_py_test(
 )
 
 cuda_py_test(
+    name = "moving_averages_test",
+    srcs = ["moving_averages_test.py"],
+    additional_deps = [
+        ":combinations",
+        "@absl_py//absl/testing:parameterized",
+        "//tensorflow/python/eager:test",
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:constant_op",
+        "//tensorflow/python:dtypes",
+        "//tensorflow/python:training",
+        "//tensorflow/python:variables",
+    ],
+    tags = [
+        "no_pip",
+    ],
+)
+
+cuda_py_test(
     name = "optimizer_v2_test",
     srcs = ["optimizer_v2_test.py"],
     additional_deps = [
@@ -701,11 +720,29 @@ cuda_py_test(
     additional_deps = [
         ":keras_test_lib",
     ],
+    shard_count = 16,
     tags = [
         "multi_and_single_gpu",
+        "no_oss",  # TODO(b/117919883): Fix python error.
         "no_pip",
         "no_windows_gpu",
         "notsan",
+    ],
+)
+
+py_library(
+    name = "metrics_v1_test_lib",
+    testonly = 1,
+    srcs = ["metrics_v1_test.py"],
+    deps = [
+        ":combinations",
+        "//tensorflow/contrib/data/python/ops:batching",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:metrics",
+        "//tensorflow/python:variables",
+        "//tensorflow/python/data/ops:dataset_ops",
+        "//tensorflow/python/eager:test",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -713,14 +750,7 @@ cuda_py_test(
     name = "metrics_v1_test",
     srcs = ["metrics_v1_test.py"],
     additional_deps = [
-        ":combinations",
-        "@absl_py//absl/testing:parameterized",
-        "//tensorflow/contrib/data/python/ops:batching",
-        "//tensorflow/python:math_ops",
-        "//tensorflow/python:metrics",
-        "//tensorflow/python:variables",
-        "//tensorflow/python/data/ops:dataset_ops",
-        "//tensorflow/python/eager:test",
+        ":metrics_v1_test_lib",
     ],
     tags = [
         "multi_and_single_gpu",

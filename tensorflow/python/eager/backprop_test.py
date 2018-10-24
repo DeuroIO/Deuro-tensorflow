@@ -23,6 +23,7 @@ import numpy as np
 from tensorflow.python import pywrap_tensorflow
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
+from tensorflow.python.eager import function
 from tensorflow.python.eager import test
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
@@ -257,6 +258,30 @@ class BackpropTest(test.TestCase):
       t.reset()
       loss += v * v
     self.assertAllEqual(t.gradient(loss, v), 2.0)
+
+  def testAutomaticWatchedVariables(self):
+    with backprop.GradientTape() as t:
+      self.assertEqual(0, len(t.watched_variables()))
+      v = resource_variable_ops.ResourceVariable(1.0)
+      loss = v * v
+      self.assertAllEqual([v], t.watched_variables())
+
+      t.reset()
+      self.assertEqual(0, len(t.watched_variables()))
+      loss += v * v
+      self.assertAllEqual([v], t.watched_variables())
+
+  def testExplicitWatchedVariables(self):
+    with backprop.GradientTape() as t:
+      self.assertEqual(0, len(t.watched_variables()))
+      v = resource_variable_ops.ResourceVariable(1.0)
+      t.watch(v)
+      self.assertAllEqual([v], t.watched_variables())
+
+      t.reset()
+      self.assertEqual(0, len(t.watched_variables()))
+      t.watch(v)
+      self.assertAllEqual([v], t.watched_variables())
 
   @test_util.assert_no_new_tensors
   def testGradientNone(self):
@@ -548,6 +573,17 @@ class BackpropTest(test.TestCase):
     grad = g.gradient(y, [x])[0]
     self.assertEqual(self.evaluate(grad), 6.0)
 
+  @test_util.assert_no_new_tensors
+  @test_util.run_in_graph_and_eager_modes
+  def testGadientTapeCalledOnConstantTarget(self):
+    with backprop.GradientTape() as g:
+      x = variables.Variable([3.0])
+      y = variables.Variable([2.0])
+    with self.assertRaisesRegexp(
+        ValueError,
+        'GradientTape.gradient is not supported for variable targets.'):
+      g.gradient(x, y)
+
   @test_util.run_in_graph_and_eager_modes
   def testGradientTapeWithCond(self):
     x = constant_op.constant(3.0)
@@ -676,6 +712,60 @@ class BackpropTest(test.TestCase):
     dz_dx, dz_dy = g.gradient(z, [x, y])
     self.assertEqual(self.evaluate(dz_dx), 108.0)
     self.assertEqual(self.evaluate(dz_dy), 18.0)
+
+  @test_util.assert_no_new_tensors
+  @test_util.run_in_graph_and_eager_modes
+  def testUnconnectedGradientsDefault(self):
+    x = constant_op.constant(1.0)
+    y = constant_op.constant(3.0)
+    with backprop.GradientTape() as g:
+      g.watch([x, y])
+      z = y * 2
+    dz_dx = g.gradient(z, x)
+    self.assertEqual(dz_dx, None)
+
+  @test_util.assert_no_new_tensors
+  @test_util.run_in_graph_and_eager_modes
+  def testUnconnectedGradientsZeros(self):
+    x = constant_op.constant(1.0, shape=[2, 2])
+    y = constant_op.constant(3.0)
+    with backprop.GradientTape() as g:
+      g.watch([x, y])
+      z = y * 2
+    dz_dx = g.gradient(z, x, unconnected_gradients='zero')
+    self.assertAllEqual([[0.0, 0.0], [0.0, 0.0]], self.evaluate(dz_dx))
+
+  @test_util.assert_no_new_tensors
+  @test_util.run_in_graph_and_eager_modes
+  def testUnknownUnconnectedGradientsValueGiven(self):
+    x = constant_op.constant(1.0)
+    y = constant_op.constant(1.0)
+    with backprop.GradientTape() as g:
+      g.watch([x, y])
+      z = y * 2
+    with self.assertRaisesRegexp(
+        ValueError, "Unknown value for unconnected_gradients: 'nonsense'"):
+      g.gradient(z, x, unconnected_gradients='nonsense')
+
+  @test_util.run_in_graph_and_eager_modes
+  def testUnconnectedGradientsNestedDefunZeros(self):
+
+    @function.defun
+    def f(x):
+      return x * x
+
+    @function.defun
+    def h(y):
+      z = f(y)
+      return array_ops.stop_gradient(z)
+
+    x = constant_op.constant(1.0)
+    with backprop.GradientTape() as g:
+      g.watch(x)
+      y = h(x)
+
+    dy_dx = g.gradient(y, x, unconnected_gradients='zero')
+    self.assertEqual(0.0, self.evaluate(dy_dx))
 
   @test_util.assert_no_new_tensors
   def testEmptyParamsForValueAndGradFunction(self):
@@ -981,7 +1071,6 @@ class BackpropTest(test.TestCase):
     self.evaluate([x1.initializer, x2.initializer])
     self.assertIsNone(dy)
     self.assertEqual(self.evaluate(dz), 3.0)
-
 
   @test_util.run_in_graph_and_eager_modes
   def testDifferentiatingScalarCache(self):

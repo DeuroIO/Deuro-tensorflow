@@ -293,14 +293,10 @@ tf_cuda_library(
 
 cc_library(
     name = "ops_util",
-    srcs = ["ops_util.cc"],
     hdrs = ["ops_util.h"],
     copts = if_not_windows(["-Wno-sign-compare"]),
     deps = [
         "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-        "//tensorflow/core:protos_all_cc",
-        "//third_party/eigen3",
     ],
 )
 
@@ -508,8 +504,7 @@ cc_library(
     hdrs = ["bounds_check.h"],
     visibility = [":friends"],
     deps = [
-        "//tensorflow/core:framework_lite",
-        "//third_party/eigen3",
+        "//tensorflow/core:framework_bounds_check",
     ],
 )
 
@@ -958,6 +953,61 @@ tf_kernel_library(
     ]) + ARRAY_DEPS,
 )
 
+cc_library(
+    name = "ragged_ops",
+    deps = [
+        ":ragged_gather_op",
+        ":ragged_range_op",
+    ],
+)
+
+tf_kernel_library(
+    name = "ragged_gather_op",
+    srcs = ["ragged_gather_op.cc"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:ragged_array_ops_op_lib",
+    ],
+)
+
+tf_kernel_library(
+    name = "ragged_range_op",
+    srcs = ["ragged_range_op.cc"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:ragged_math_ops_op_lib",
+    ],
+)
+
+tf_cc_test(
+    name = "ragged_gather_op_test",
+    size = "small",
+    srcs = ["ragged_gather_op_test.cc"],
+    deps = [
+        ":ragged_gather_op",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:ragged_array_ops_op_lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "//tensorflow/core/kernels:ops_testutil",
+    ],
+)
+
+tf_cc_test(
+    name = "ragged_range_op_test",
+    srcs = ["ragged_range_op_test.cc"],
+    deps = [
+        ":ragged_range_op",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:ragged_math_ops_op_lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "//tensorflow/core/kernels:ops_testutil",
+    ],
+)
+
 tf_kernel_library(
     name = "cudnn_rnn_kernels",
     srcs = ["cudnn_rnn_ops.cc"],
@@ -1197,8 +1247,10 @@ tf_cc_test(
 
 tf_cc_test(
     name = "example_parsing_ops_test",
-    size = "large",
+    size = "medium",
     srcs = ["example_parsing_ops_test.cc"],
+    shard_count = 4,
+    tags = ["optonly"],
     deps = [
         ":example_parsing_ops",
         ":ops_testutil",
@@ -2030,6 +2082,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:resource_variable_ops_op_lib",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -2094,6 +2147,11 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:functional_ops_op_lib",
         "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler/clusters:virtual_cluster",
+        "//tensorflow/core/grappler/optimizers:meta_optimizer",
+        "//tensorflow/core/grappler/utils:functions",
     ],
 )
 
@@ -2571,6 +2629,7 @@ cc_library(
         ":matrix_logarithm_op",
         ":matrix_solve_ls_op",
         ":matrix_solve_op",
+        ":matrix_square_root_op",
         ":matrix_triangular_solve_op",
         ":qr_op",
         ":self_adjoint_eig_op",
@@ -2677,6 +2736,12 @@ tf_kernel_library(
 tf_kernel_library(
     name = "matrix_solve_op",
     prefix = "matrix_solve_op",
+    deps = LINALG_DEPS,
+)
+
+tf_kernel_library(
+    name = "matrix_square_root_op",
+    prefix = "matrix_square_root_op",
     deps = LINALG_DEPS,
 )
 
@@ -4049,11 +4114,6 @@ cc_library(
 )
 
 SPARSE_DEPS = [
-    ":bounds_check",
-    ":cwise_op",
-    ":fill_functor",
-    ":scatter_functor",
-    "//third_party/eigen3",
     "//tensorflow/core:framework",
     "//tensorflow/core:lib",
     "//tensorflow/core:sparse_ops_op_lib",
@@ -4086,7 +4146,9 @@ tf_kernel_library(
 tf_kernel_library(
     name = "sparse_cross_op",
     prefix = "sparse_cross_op",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
@@ -4098,13 +4160,19 @@ tf_kernel_library(
 tf_kernel_library(
     name = "sparse_dense_binary_op_shared",
     prefix = "sparse_dense_binary_op_shared",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        ":cwise_op",
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
     name = "sparse_sparse_binary_op_shared",
     prefix = "sparse_sparse_binary_op_shared",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        ":cwise_op",
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
@@ -4136,7 +4204,9 @@ tf_kernel_library(
 tf_kernel_library(
     name = "sparse_softmax",
     prefix = "sparse_softmax",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
@@ -4148,25 +4218,37 @@ tf_kernel_library(
 tf_kernel_library(
     name = "sparse_tensor_dense_add_op",
     prefix = "sparse_tensor_dense_add_op",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        ":scatter_functor",
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
     name = "sparse_tensor_dense_matmul_op",
     prefix = "sparse_tensor_dense_matmul_op",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        ":bounds_check",
+        ":fill_functor",
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
     name = "sparse_to_dense_op",
     prefix = "sparse_to_dense_op",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
     name = "sparse_xent_op",
     prefix = "sparse_xent_op",
-    deps = SPARSE_DEPS,
+    deps = SPARSE_DEPS + [
+        ":bounds_check",
+        "//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
@@ -4439,7 +4521,12 @@ cc_library(
     name = "string_util",
     srcs = ["string_util.cc"],
     hdrs = ["string_util.h"],
-    deps = ["//tensorflow/core:lib"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "@icu//:common",
+    ],
 )
 
 STRING_DEPS = [
@@ -4978,7 +5065,6 @@ filegroup(
         "eigen_volume_patch.h",
         "fifo_queue.h",
         "maxpooling_op.h",
-        "ops_util.cc",
         "ops_util.h",
         "padding_fifo_queue.h",
         "pooling_ops_common.cc",
@@ -5431,7 +5517,6 @@ filegroup(
             "*_3d*",
             "*.cu.*",
             # Ops already in android_srcs
-            "ops_util.cc",
             "pooling_ops_common.cc",
             # Ops which we are currently excluding because they are likely
             # not used on Android. Those ops also do not compile if included,

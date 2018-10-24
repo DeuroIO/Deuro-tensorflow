@@ -37,6 +37,7 @@ cc_library(
         "//tensorflow/python:safe_ptr",
         "//third_party/py/numpy:headers",
         "//third_party/python_runtime:headers",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:variant",
     ],
 )
@@ -55,6 +56,7 @@ py_library(
         ":graph_only_ops",
         ":tape",
         ":test",
+        ":wrap_function",
         "//tensorflow/python:pywrap_tensorflow",
     ],
 )
@@ -81,6 +83,7 @@ py_library(
         "//tensorflow/python:errors",
         "//tensorflow/python:platform",
         "//tensorflow/python:pywrap_tensorflow",
+        "//tensorflow/python:tf2",
         "//tensorflow/python:util",
     ],
 )
@@ -141,13 +144,17 @@ cuda_py_test(
 
 cuda_py_test(
     name = "function_test",
+    size = "medium",
     srcs = ["function_test.py"],
     additional_deps = [
         ":backprop",
         ":context",
+        ":def_function",
         ":function",
         ":tape",
         ":test",
+        "@absl_py//absl/testing:parameterized",
+        "//tensorflow/python:test_ops",
         "//tensorflow/python:clip_ops",
         "//tensorflow/python:init_ops",
         "//tensorflow/python:layers",
@@ -155,6 +162,7 @@ cuda_py_test(
         "//tensorflow/python:math_ops",
         "//tensorflow/python:resource_variable_ops",
     ],
+    shard_count = 10,
 )
 
 py_library(
@@ -243,10 +251,10 @@ py_library(
     visibility = ["//tensorflow:internal"],
     deps = [
         ":graph_only_ops",
-        "//tensorflow/python:cond_v2_impl",
         "//tensorflow/python:dtypes",
         "//tensorflow/python:errors",
         "//tensorflow/python:framework_ops",
+        "//tensorflow/python:func_graph",
         "//tensorflow/python:gradients_impl",
         "//tensorflow/python:graph_to_function_def",
         "//tensorflow/python:util",
@@ -271,6 +279,7 @@ py_library(
         "//tensorflow/python:dtypes",
         "//tensorflow/python:errors",
         "//tensorflow/python:framework_ops",
+        "//tensorflow/python:gradients_impl",
         "//tensorflow/python:math_ops",
         "//tensorflow/python:pywrap_tensorflow",
         "//tensorflow/python:tensor_shape",
@@ -365,6 +374,11 @@ py_library(
     name = "imperative_grad",
     srcs = ["imperative_grad.py"],
     srcs_version = "PY2AND3",
+    deps = [
+        "//tensorflow/python:gradients_impl",
+        "//tensorflow/python:pywrap_tensorflow",
+        "//tensorflow/python:util",
+    ],
 )
 
 cuda_py_test(
@@ -389,6 +403,7 @@ py_library(
     name = "def_function",
     srcs = ["def_function.py"],
     srcs_version = "PY2AND3",
+    visibility = ["//tensorflow:internal"],
     deps = [
         ":context",
         ":function",
@@ -408,6 +423,32 @@ py_test(
         ":def_function",
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:constant_op",
+        "//tensorflow/python:framework_ops",
+    ],
+)
+
+py_library(
+    name = "wrap_function",
+    srcs = ["wrap_function.py"],
+    srcs_version = "PY2AND3",
+    visibility = ["//tensorflow:internal"],
+    deps = [
+        ":context",
+        ":function",
+        "//tensorflow/python:framework_ops",
+        "//tensorflow/python:template",
+        "//tensorflow/python:variable_scope",
+        "//tensorflow/python/training/checkpointable:base",
+    ],
+)
+
+py_test(
+    name = "wrap_function_test",
+    srcs = ["wrap_function_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":wrap_function",
+        "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_ops",
     ],
 )

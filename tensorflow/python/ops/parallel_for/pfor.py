@@ -1033,7 +1033,7 @@ class PFor(object):
         *[self._unwrap_or_tile(w) for w in outputs])
 
   def _restack_sparse_tensor_logically(self, indices, values, shape):
-    sparse_tensor_rank = indices.get_shape()[-1].value
+    sparse_tensor_rank = indices.get_shape().dims[-1].value
     if sparse_tensor_rank is not None:
       sparse_tensor_rank += 1
 
@@ -1537,6 +1537,13 @@ def _convert_identity(pfor_input, op_type, op_func):
   return wrap(op_func(*[x.t for x in pfor_input.inputs]), True)
 
 
+@RegisterPFor("IdentityN")
+def _convert_identity_n(pfor_input):
+  outputs = array_ops.identity_n([x.t for x in pfor_input.inputs])
+  return [wrap(out, inp.is_stacked) for out, inp in
+          zip(outputs, pfor_input.inputs)]
+
+
 @RegisterPFor("Reshape")
 def _convert_reshape(pfor_input):
   t = pfor_input.stacked_input(0)
@@ -1609,6 +1616,15 @@ def _convert_split(pfor_input):
   return [wrap(x, True) for x in array_ops.split(t, num_split, axis=split_dim)]
 
 
+@RegisterPFor("SplitV")
+def _convert_split_v(pfor_input):
+  t = pfor_input.stacked_input(0)
+  splits = pfor_input.unstacked_input(1)
+  split_dim = pfor_input.unstacked_input(2)
+  split_dim += math_ops.cast(split_dim >= 0, dtypes.int32)
+  return [wrap(x, True) for x in array_ops.split(t, splits, axis=split_dim)]
+
+
 @RegisterPFor("Transpose")
 def _convert_transpose(pfor_input):
   t = pfor_input.stacked_input(0)
@@ -1641,8 +1657,8 @@ def _convert_gather(pfor_input):
       axis = axis_value
   if indices_stacked and not param_stacked:
     if indices == pfor_input.pfor.all_indices and axis == 0:
-      param_shape0 = param.shape[0].value
-      indices_shape0 = indices.shape[0].value
+      param_shape0 = param.shape.dims[0].value
+      indices_shape0 = indices.shape.dims[0].value
       if param_shape0 is not None and indices_shape0 == param_shape0:
         # Note that with loops and conditionals, indices may not be contiguous.
         # However they will be sorted and unique. So if the shape matches, then
@@ -1908,7 +1924,8 @@ def _convert_unsortedsegmentsum(pfor_input):
   segment_offset = array_ops.reshape(segment_offset,
                                      array_ops.concat([[n], ones], axis=0))
   segment_ids += segment_offset
-  num_segments *= n
+  num_segments = math_ops.cast(num_segments, dtypes.int64) * math_ops.cast(
+      n, dtypes.int64)
   output = math_ops.unsorted_segment_sum(data, segment_ids, num_segments)
   new_output_shape = array_ops.concat(
       [[n, -1], array_ops.shape(output)[1:]], axis=0)
@@ -1987,14 +2004,12 @@ def _convert_cast(pfor_input):
 @RegisterPForWithArgs("Pow", math_ops.pow)
 @RegisterPForWithArgs("RealDiv", math_ops.divide)
 @RegisterPForWithArgs("Real", math_ops.real)
-@RegisterPForWithArgs("ReciprocalGrad", math_ops.reciprocal_grad)
 @RegisterPForWithArgs("Reciprocal", math_ops.reciprocal)
 @RegisterPForWithArgs("Relu6", nn_ops.relu6)
 @RegisterPForWithArgs("Relu", nn_ops.relu)
 @RegisterPForWithArgs("RightShift", bitwise_ops.right_shift)
 @RegisterPForWithArgs("Rint", math_ops.rint)
 @RegisterPForWithArgs("Round", math_ops.round)
-@RegisterPForWithArgs("RsqrtGrad", math_ops.rsqrt_grad)
 @RegisterPForWithArgs("Rsqrt", math_ops.rsqrt)
 @RegisterPForWithArgs("Selu", nn_ops.selu)
 @RegisterPForWithArgs("Sigmoid", math_ops.sigmoid)
@@ -2003,7 +2018,6 @@ def _convert_cast(pfor_input):
 @RegisterPForWithArgs("Sin", math_ops.sin)
 @RegisterPForWithArgs("Softplus", nn_ops.softplus)
 @RegisterPForWithArgs("Softsign", nn_ops.softsign)
-@RegisterPForWithArgs("SqrtGrad", math_ops.sqrt_grad)
 @RegisterPForWithArgs("Sqrt", math_ops.sqrt)
 @RegisterPForWithArgs("SquaredDifference", math_ops.squared_difference)
 @RegisterPForWithArgs("Square", math_ops.square)
@@ -2095,6 +2109,9 @@ def _convert_biasaddgrad(pfor_input):
 @RegisterPForWithArgs("SoftplusGrad")
 @RegisterPForWithArgs("SoftsignGrad")
 @RegisterPForWithArgs("TanhGrad")
+@RegisterPForWithArgs("SqrtGrad")
+@RegisterPForWithArgs("RsqrtGrad")
+@RegisterPForWithArgs("ReciprocalGrad")
 def _convert_grads(pfor_input, op_type, *args, **kw_args):
   del args
   del kw_args

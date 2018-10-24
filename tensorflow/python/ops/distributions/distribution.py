@@ -34,6 +34,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops.distributions import kullback_leibler
 from tensorflow.python.ops.distributions import util
+from tensorflow.python.util import deprecation
 from tensorflow.python.util import tf_inspect
 from tensorflow.python.util.tf_export import tf_export
 
@@ -229,6 +230,14 @@ class ReparameterizationType(object):
     gradients / surrogate loss instead.
   """
 
+  @deprecation.deprecated(
+      "2019-01-01",
+      "The TensorFlow Distributions library has moved to "
+      "TensorFlow Probability "
+      "(https://github.com/tensorflow/probability). You "
+      "should update all references to use `tfp.distributions` "
+      "instead of `tf.distributions`.",
+      warn_once=True)
   def __init__(self, rep_type):
     self._rep_type = rep_type
 
@@ -405,6 +414,14 @@ class Distribution(_BaseDistribution):
 
   """
 
+  @deprecation.deprecated(
+      "2019-01-01",
+      "The TensorFlow Distributions library has moved to "
+      "TensorFlow Probability "
+      "(https://github.com/tensorflow/probability). You "
+      "should update all references to use `tfp.distributions` "
+      "instead of `tf.distributions`.",
+      warn_once=True)
   def __init__(self,
                dtype,
                reparameterization_type,
@@ -1298,7 +1315,7 @@ class Distribution(_BaseDistribution):
       return static_shape.ndims == 0
     shape = dynamic_shape_fn()
     if (shape.get_shape().ndims is not None and
-        shape.get_shape()[0].value is not None):
+        shape.get_shape().dims[0].value is not None):
       # If the static_shape is correctly written then we should never execute
       # this branch. We keep it just in case there's some unimagined corner
       # case.

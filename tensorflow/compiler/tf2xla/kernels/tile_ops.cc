@@ -96,7 +96,11 @@ class TileOp : public XlaOpKernel {
       // operation broadcast semantics.
       auto broadcasted_zero = xla::Broadcast(
           XlaHelpers::Zero(ctx->builder(), ctx->input_type(0)), output_shape);
-      ctx->SetOutput(0, xla::Add(broadcasted_zero, input));
+      if (ctx->input_type(0) == DT_BOOL) {
+        ctx->SetOutput(0, xla::Or(broadcasted_zero, input));
+      } else {
+        ctx->SetOutput(0, xla::Add(broadcasted_zero, input));
+      }
       return;
     }
 
@@ -122,7 +126,7 @@ class TileOp : public XlaOpKernel {
   TF_DISALLOW_COPY_AND_ASSIGN(TileOp);
 };
 
-REGISTER_XLA_OP(Name("Tile").CompileTimeConstInput("multiples"), TileOp);
+REGISTER_XLA_OP(Name("Tile").CompileTimeConstantInput("multiples"), TileOp);
 
 }  // namespace
 }  // namespace tensorflow

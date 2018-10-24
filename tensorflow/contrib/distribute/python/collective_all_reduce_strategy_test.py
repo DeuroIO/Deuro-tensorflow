@@ -117,7 +117,7 @@ class CollectiveAllReduceStrategyTestBase(
       def step():
         """Perform one optimization step."""
         # Run forward & backward to get gradients, variables list.
-        g_v = d.call_for_each_tower(grad_fn, one)
+        g_v = d.call_for_each_replica(grad_fn, one)
         # Update the variables using the gradients and the update() function.
         before_list = []
         after_list = []
@@ -128,7 +128,8 @@ class CollectiveAllReduceStrategyTestBase(
             # TODO(yuefengz): support non-Mirrored variable as destinations.
             g = d.reduce(
                 variable_scope.VariableAggregation.SUM, g, destinations=v)
-            with ops.control_dependencies(d.unwrap(d.update(v, update, g))):
+            with ops.control_dependencies(
+                d.update(v, update, g, grouped=False)):
               after_list.append(d.read_var(v))
         return before_list, after_list
 
@@ -195,7 +196,7 @@ class CollectiveAllReduceStrategyTestBase(
          self.test_session(config=self._sess_config,
                            target=master_target) as sess:
       with d.scope():
-        train_op = d.call_for_each_tower(model_fn)
+        train_op = d.call_for_each_replica(model_fn)
         train_op = d.group(d.unwrap(train_op))
 
       sess.run(variables.global_variables_initializer())
@@ -218,7 +219,7 @@ class CollectiveAllReduceStrategyTestBase(
                 1.0, 10.0, dtype=dtypes.float32))
         return array_ops.identity(x)
 
-      x = distribution.call_for_each_tower(model_fn)
+      x = distribution.call_for_each_replica(model_fn)
       reduced_x = distribution.unwrap(
           distribution.reduce(
               variable_scope.VariableAggregation.MEAN, x,
@@ -245,6 +246,16 @@ class DistributedCollectiveAllReduceStrategyTest(
     """Create a local cluster with 3 workers."""
     cls._cluster_spec = multi_worker_test_base.create_in_process_cluster(
         num_workers=3, num_ps=0)
+
+  def test_num_replicas_in_sync(self):
+    distribution = collective_all_reduce_strategy.CollectiveAllReduceStrategy(
+        num_gpus_per_worker=2)
+    distribution.configure(cluster_spec=self._cluster_spec, task_type='worker',
+                           task_id=0)
+    num_workers = len(self._cluster_spec.get('chief', []) +
+                      self._cluster_spec.get('worker', []))
+    self.assertEqual(2 * num_workers,
+                     distribution.num_replicas_in_sync)
 
   @combinations.generate(
       combinations.combine(mode=['graph'], num_gpus=[0, 1, 2], required_gpus=1))

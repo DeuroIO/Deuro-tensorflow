@@ -505,13 +505,13 @@ RnnDescriptor CreateRnnDescriptor() {
   CHECK_CUDNN_OK(cudnnCreateRNNDescriptor(&result));
   return RnnDescriptor(result);
 }
-PersistentRnnPlan CreatePersistentRnnPlan(cudnnRNNDescriptor_t rnn_desc,
-                                          int batch_size,
-                                          cudnnDataType_t data_type) {
+
+port::StatusOr<PersistentRnnPlan> CreatePersistentRnnPlan(
+    cudnnRNNDescriptor_t rnn_desc, int batch_size, cudnnDataType_t data_type) {
   cudnnPersistentRNNPlan_t result;
-  CHECK_CUDNN_OK(
+  RETURN_IF_CUDNN_ERROR(
       cudnnCreatePersistentRNNPlan(rnn_desc, batch_size, data_type, &result));
-  return PersistentRnnPlan(result);
+  return port::StatusOr<PersistentRnnPlan>(PersistentRnnPlan(result));
 }
 
 // Turns a BatchDescriptor structure into a cudnn tensor handle within a
@@ -1042,12 +1042,19 @@ class CudnnRnnDescriptor : public dnn::RnnDescriptor {
         /*mode=*/rnn_mode, /*algo=*/rnn_algo,
         /*dataType=*/compute_type));
 
+    port::StatusOr<PersistentRnnPlan> rnn_plan_wrapper;
     PersistentRnnPlan rnn_plan;
     if (rnn_algo == CUDNN_RNN_ALGO_PERSIST_DYNAMIC) {
       CHECK_GE(batch_size, 0);
-      rnn_plan = CreatePersistentRnnPlan(rnn_desc.get(), batch_size, data_type);
-      RETURN_IF_CUDNN_ERROR(
-          cudnnSetPersistentRNNPlan(rnn_desc.get(), rnn_plan.get()));
+      rnn_plan_wrapper =
+          CreatePersistentRnnPlan(rnn_desc.get(), batch_size, data_type);
+      if (!rnn_plan_wrapper.ok()) {
+        return port::StatusOr<CudnnRnnDescriptor>(rnn_plan_wrapper.status());
+      } else {
+        rnn_plan = rnn_plan_wrapper.ConsumeValueOrDie();
+        RETURN_IF_CUDNN_ERROR(
+            cudnnSetPersistentRNNPlan(rnn_desc.get(), rnn_plan.get()));
+      }
     }
 
     // Create the params handle.
@@ -2487,30 +2494,32 @@ port::Status CudnnSupport::DoConvolveImpl(
 
   // Report an error if we might be hitting a cuDNN bug that accesses illegal
   // memory. See nvbugs/2138754, b/80018418.
-  SE_RETURN_IF_ERROR([&] {
-    if (algo_desc.algo_id() != CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING) {
-      return port::Status::OK();
-    }
-    if (input_descriptor.ndims() < 3) {
-      return port::Status::OK();
-    }
-    // Checks that a*b is within the valid range (as provided by NVIDIA).
-    auto check_sizes = [](size_t a, size_t b) {
-      if ((a * b * 4608 - 1) >> 31 == 0) {
+  if (CUDNN_VERSION < 7300) {
+    SE_RETURN_IF_ERROR([&] {
+      if (algo_desc.algo_id() != CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING) {
         return port::Status::OK();
       }
-      return port::Status(
-          port::error::FAILED_PRECONDITION,
-          "This configuration potentially accesses illegal memory.");
-    };
-    SE_RETURN_IF_ERROR(check_sizes(input_descriptor.feature_map_count(),
-                                   output_descriptor.feature_map_count()));
-    SE_RETURN_IF_ERROR(check_sizes(input_descriptor.count(),
-                                   input_descriptor.feature_map_count()));
-    SE_RETURN_IF_ERROR(check_sizes(input_descriptor.count(),
-                                   output_descriptor.feature_map_count()));
-    return port::Status::OK();
-  }());
+      if (input_descriptor.ndims() < 3) {
+        return port::Status::OK();
+      }
+      // Checks that a*b is within the valid range (as provided by NVIDIA).
+      auto check_sizes = [](size_t a, size_t b) {
+        if ((a * b * 4608 - 1) >> 31 == 0) {
+          return port::Status::OK();
+        }
+        return port::Status(
+            port::error::FAILED_PRECONDITION,
+            "This configuration potentially accesses illegal memory.");
+      };
+      SE_RETURN_IF_ERROR(check_sizes(input_descriptor.feature_map_count(),
+                                     output_descriptor.feature_map_count()));
+      SE_RETURN_IF_ERROR(check_sizes(input_descriptor.count(),
+                                     input_descriptor.feature_map_count()));
+      SE_RETURN_IF_ERROR(check_sizes(input_descriptor.count(),
+                                     output_descriptor.feature_map_count()));
+      return port::Status::OK();
+    }());
+  }
 
   if (algo_desc.algo_id() == CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED &&
       !ShouldIncludeWinogradNonfusedAlgo(input_descriptor, output_descriptor)) {
@@ -3166,7 +3175,7 @@ port::Status CudnnSupport::DoConvolveBackwardDataImpl(
 
   // Cudnn 7.1.4 has a bug if the workspace of the following convolution is not
   // zero-initialized, nvbugs/2254619.
-  if (CUDNN_VERSION >= 7000 &&
+  if (CUDNN_VERSION >= 7000 && CUDNN_VERSION < 7300 &&
       algorithm_config.algorithm().algo_id() ==
           CUDNN_CONVOLUTION_BWD_DATA_ALGO_1 &&
       cudnn_type == CUDNN_DATA_HALF &&
@@ -3317,31 +3326,33 @@ port::Status CudnnSupport::DoConvolveBackwardFilterImpl(
 
   // Report an error if we might be hitting a cuDNN bug that produces incorrect
   // results. See nvbugs/2072856
-  SE_RETURN_IF_ERROR([&] {
-    if (algo_desc.algo_id() != CUDNN_CONVOLUTION_BWD_FILTER_ALGO_FFT_TILING) {
-      return port::Status::OK();
-    }
-    if (output_descriptor.height() > 1 && output_descriptor.width() > 1) {
-      return port::Status::OK();
-    }
-    int convolution_size = output_descriptor.height() > 1
-                               ? filter_descriptor.input_filter_height()
-                               : filter_descriptor.input_filter_width();
-    if (convolution_size <= 32) {
-      return port::Status::OK();
-    }
-    cudnnConvolutionMode_t convolution_mode;
-    cudnnDataType_t compute_type;
-    RETURN_IF_CUDNN_ERROR(cudnnGetConvolutionNdDescriptor(
-        conv.handle(), 0, nullptr, nullptr, nullptr, nullptr, &convolution_mode,
-        &compute_type));
-    if (convolution_mode != CUDNN_CONVOLUTION) {
-      return port::Status::OK();
-    }
-    return port::Status(
-        port::error::FAILED_PRECONDITION,
-        "This configuration potentially produces incorrect results.");
-  }());
+  if (CUDNN_VERSION < 7300) {
+    SE_RETURN_IF_ERROR([&] {
+      if (algo_desc.algo_id() != CUDNN_CONVOLUTION_BWD_FILTER_ALGO_FFT_TILING) {
+        return port::Status::OK();
+      }
+      if (output_descriptor.height() > 1 && output_descriptor.width() > 1) {
+        return port::Status::OK();
+      }
+      int convolution_size = output_descriptor.height() > 1
+                                 ? filter_descriptor.input_filter_height()
+                                 : filter_descriptor.input_filter_width();
+      if (convolution_size <= 32) {
+        return port::Status::OK();
+      }
+      cudnnConvolutionMode_t convolution_mode;
+      cudnnDataType_t compute_type;
+      RETURN_IF_CUDNN_ERROR(cudnnGetConvolutionNdDescriptor(
+          conv.handle(), 0, nullptr, nullptr, nullptr, nullptr,
+          &convolution_mode, &compute_type));
+      if (convolution_mode != CUDNN_CONVOLUTION) {
+        return port::Status::OK();
+      }
+      return port::Status(
+          port::error::FAILED_PRECONDITION,
+          "This configuration potentially produces incorrect results.");
+    }());
+  }
 
   if (algo_desc.algo_id() == CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED &&
       !ShouldIncludeWinogradNonfusedAlgo(input_descriptor, output_descriptor)) {
@@ -3357,8 +3368,8 @@ port::Status CudnnSupport::DoConvolveBackwardFilterImpl(
   // This wrong result caused by the bug is very flaky. It needs to be run for
   // up to 20 times to produce a mismatch.
   //
-  // TODO(timshen): add a nvbugs link.
-  if (CUDNN_VERSION >= 7100 &&
+  // See nvbugs/2379553.
+  if (CUDNN_VERSION >= 7100 && CUDNN_VERSION < 7300 &&
       algorithm_config.algorithm().algo_id() ==
           CUDNN_CONVOLUTION_BWD_FILTER_ALGO_1 &&
       cudnn_type == CUDNN_DATA_HALF &&

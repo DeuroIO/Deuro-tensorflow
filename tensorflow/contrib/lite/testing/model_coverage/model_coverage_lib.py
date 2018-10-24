@@ -27,6 +27,7 @@ from tensorflow.python import keras as _keras
 from tensorflow.python.client import session as _session
 from tensorflow.python.framework.importer import import_graph_def as _import_graph_def
 from tensorflow.python.lib.io import file_io as _file_io
+from tensorflow.python.saved_model import loader as _loader
 from tensorflow.python.saved_model import signature_constants as _signature_constants
 from tensorflow.python.saved_model import tag_constants as _tag_constants
 
@@ -35,15 +36,15 @@ def _convert(converter, **kwargs):
   """Converts the model.
 
   Args:
-    converter: TocoConverter object.
+    converter: TFLiteConverter object.
     **kwargs: Additional arguments to be passed into the converter. Supported
-      flags are {"converter_mode", "post_training_quant"}.
+      flags are {"target_ops", "post_training_quantize"}.
 
   Returns:
     The converted TFLite model in serialized format.
   """
-  if "converter_mode" in kwargs:
-    converter.converter_mode = kwargs["converter_mode"]
+  if "target_ops" in kwargs:
+    converter.target_ops = kwargs["target_ops"]
   if "post_training_quantize" in kwargs:
     converter.post_training_quantize = kwargs["post_training_quantize"]
   return converter.convert()
@@ -144,7 +145,7 @@ def evaluate_saved_model(directory, tag_set, signature_key):
     if signature_key is None:
       signature_key = _signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY
 
-    meta_graph = _convert_saved_model.get_meta_graph_def(directory, tag_set)
+    meta_graph = _loader.load(sess, tag_set, directory)
     signature_def = _convert_saved_model.get_signature_def(
         meta_graph, signature_key)
     inputs, outputs = _convert_saved_model.get_inputs_outputs(signature_def)
@@ -174,13 +175,78 @@ def compare_models_random_data(tflite_model, tf_eval_func, tolerance=5):
     tflite_model: Serialized TensorFlow Lite model.
     tf_eval_func: Lambda function that takes in input data and outputs the
       results of the TensorFlow model ([np.ndarray data] : [np.ndarray result]).
-    tolerance: Decimal place to check accuracy to.
+    tolerance: Decimal place to check accuracy to. (default 5)
   """
   input_data = _generate_random_input_data(tflite_model)
   tf_results = tf_eval_func(input_data)
   tflite_results = _evaluate_tflite_model(tflite_model, input_data)
   for tf_result, tflite_result in zip(tf_results, tflite_results):
     np.testing.assert_almost_equal(tf_result, tflite_result, tolerance)
+
+
+def test_frozen_graph_quant(filename,
+                            input_arrays,
+                            output_arrays,
+                            input_shapes=None,
+                            **kwargs):
+  """Sanity check to validate post quantize flag alters the graph.
+
+  This test does not check correctness of the converted model. It converts the
+  TensorFlow frozen graph to TFLite with and without the post_training_quantized
+  flag. It ensures some tensors have different types between the float and
+  quantized models in the case of an all TFLite model or mix-and-match model.
+  It ensures tensor types do not change in the case of an all Flex model.
+
+  Args:
+    filename: Full filepath of file containing frozen GraphDef.
+    input_arrays: List of input tensors to freeze graph with.
+    output_arrays: List of output tensors to freeze graph with.
+    input_shapes: Dict of strings representing input tensor names to list of
+      integers representing input shapes (e.g., {"foo" : [1, 16, 16, 3]}).
+      Automatically determined when input shapes is None (e.g., {"foo" : None}).
+        (default None)
+    **kwargs: Additional arguments to be passed into the converter.
+
+  Raises:
+    ValueError: post_training_quantize flag doesn't act as intended.
+  """
+  # Convert and load the float model.
+  converter = _lite.TFLiteConverter.from_frozen_graph(
+      filename, input_arrays, output_arrays, input_shapes)
+  tflite_model_float = _convert(converter, **kwargs)
+
+  interpreter_float = _lite.Interpreter(model_content=tflite_model_float)
+  interpreter_float.allocate_tensors()
+  float_tensors = interpreter_float.get_tensor_details()
+
+  # Convert and load the quantized model.
+  converter = _lite.TFLiteConverter.from_frozen_graph(filename, input_arrays,
+                                                      output_arrays)
+  tflite_model_quant = _convert(
+      converter, post_training_quantize=True, **kwargs)
+
+  interpreter_quant = _lite.Interpreter(model_content=tflite_model_quant)
+  interpreter_quant.allocate_tensors()
+  quant_tensors = interpreter_quant.get_tensor_details()
+  quant_tensors_map = {
+      tensor_detail["name"]: tensor_detail for tensor_detail in quant_tensors
+  }
+
+  # Check if weights are of different types in the float and quantized models.
+  num_tensors_float = len(float_tensors)
+  num_tensors_same_dtypes = sum(
+      float_tensor["dtype"] == quant_tensors_map[float_tensor["name"]]["dtype"]
+      for float_tensor in float_tensors)
+  has_quant_tensor = num_tensors_float != num_tensors_same_dtypes
+
+  if ("target_ops" in kwargs and
+      set(kwargs["target_ops"]) == set([_lite.OpsSet.SELECT_TF_OPS])):
+    if has_quant_tensor:
+      raise ValueError("--post_training_quantize flag unexpectedly altered the "
+                       "full Flex mode graph.")
+  elif not has_quant_tensor:
+    raise ValueError("--post_training_quantize flag was unable to quantize the "
+                     "graph as expected in TFLite and mix-and-match mode.")
 
 
 def test_frozen_graph(filename,
@@ -203,15 +269,19 @@ def test_frozen_graph(filename,
         (default None)
     **kwargs: Additional arguments to be passed into the converter.
   """
-  converter = _lite.TocoConverter.from_frozen_graph(filename, input_arrays,
-                                                    output_arrays, input_shapes)
+  converter = _lite.TFLiteConverter.from_frozen_graph(
+      filename, input_arrays, output_arrays, input_shapes)
   tflite_model = _convert(converter, **kwargs)
 
   tf_eval_func = evaluate_frozen_graph(filename, input_arrays, output_arrays)
   compare_models_random_data(tflite_model, tf_eval_func)
 
 
-def test_saved_model(directory, tag_set=None, signature_key=None, **kwargs):
+def test_saved_model(directory,
+                     input_shapes=None,
+                     tag_set=None,
+                     signature_key=None,
+                     **kwargs):
   """Validates the TensorFlow SavedModel converts to a TFLite model.
 
   Converts the TensorFlow SavedModel to TFLite and checks the accuracy of the
@@ -219,20 +289,27 @@ def test_saved_model(directory, tag_set=None, signature_key=None, **kwargs):
 
   Args:
     directory: SavedModel directory to convert.
+    input_shapes: Dict of strings representing input tensor names to list of
+      integers representing input shapes (e.g., {"foo" : [1, 16, 16, 3]}).
+      Automatically determined when input shapes is None (e.g., {"foo" : None}).
+        (default None)
     tag_set: Set of tags identifying the MetaGraphDef within the SavedModel to
       analyze. All tags in the tag set must be present.
     signature_key: Key identifying SignatureDef containing inputs and outputs.
     **kwargs: Additional arguments to be passed into the converter.
   """
-  converter = _lite.TocoConverter.from_saved_model(directory, tag_set,
-                                                   signature_key)
+  converter = _lite.TFLiteConverter.from_saved_model(
+      directory,
+      input_shapes=input_shapes,
+      tag_set=tag_set,
+      signature_key=signature_key)
   tflite_model = _convert(converter, **kwargs)
 
   tf_eval_func = evaluate_saved_model(directory, tag_set, signature_key)
   compare_models_random_data(tflite_model, tf_eval_func)
 
 
-def test_keras_model(filename, **kwargs):
+def test_keras_model(filename, input_arrays=None, input_shapes=None, **kwargs):
   """Validates the tf.keras model converts to a TFLite model.
 
   Converts the tf.keras model to TFLite and checks the accuracy of the model on
@@ -240,9 +317,15 @@ def test_keras_model(filename, **kwargs):
 
   Args:
     filename: Full filepath of HDF5 file containing the tf.keras model.
+    input_arrays: List of input tensors to freeze graph with.
+    input_shapes: Dict of strings representing input tensor names to list of
+      integers representing input shapes (e.g., {"foo" : [1, 16, 16, 3]}).
+      Automatically determined when input shapes is None (e.g., {"foo" : None}).
+        (default None)
     **kwargs: Additional arguments to be passed into the converter.
   """
-  converter = _lite.TocoConverter.from_keras_model_file(filename)
+  converter = _lite.TFLiteConverter.from_keras_model_file(
+      filename, input_arrays=input_arrays, input_shapes=input_shapes)
   tflite_model = _convert(converter, **kwargs)
 
   tf_eval_func = evaluate_keras_model(filename)

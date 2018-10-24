@@ -35,6 +35,7 @@ from tensorflow.python.framework import tensor_shape
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_array_ops
 from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.ops import gradients_impl
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import resource_variable_ops
 from tensorflow.python.platform import tf_logging as logging
@@ -619,7 +620,7 @@ pywrap_tensorflow.TFE_Py_RegisterVSpace(_default_vspace)
 
 def _handle_or_self(x):
   """If x is ResourceVariable, return its handle, else x."""
-  if isinstance(x, resource_variable_ops.ResourceVariable):
+  if resource_variable_ops.is_resource_variable(x):
     x = x.handle
   return x
 
@@ -850,7 +851,11 @@ class GradientTape(object):
     """Returns variables watched by this tape in order of construction."""
     return self._tape.watched_variables()
 
-  def gradient(self, target, sources, output_gradients=None):
+  def gradient(self,
+               target,
+               sources,
+               output_gradients=None,
+               unconnected_gradients=gradients_impl.UnconnectedGradients.NONE):
     """Computes the gradient using operations recorded in context of this tape.
 
     Args:
@@ -859,6 +864,10 @@ class GradientTape(object):
         will be differentiated against elements in `sources`.
       output_gradients: a list of gradients, one for each element of
         target. Defaults to None.
+      unconnected_gradients: a value which can either hold 'none' or 'zero' and
+        alters the value which will be returned if the target and sources are
+        unconnected. The possible values and effects are detailed in
+        'UnconnectedGradients' and it defaults to 'none'.
 
     Returns:
       a list or nested structure of Tensors (or IndexedSlices, or None),
@@ -868,6 +877,8 @@ class GradientTape(object):
     Raises:
       RuntimeError: if called inside the context of the tape, or if called more
        than once on a non-persistent tape.
+      ValueError: if the target is a variable or if unconnected gradients is
+       called with an unknown value.
     """
     if self._tape is None:
       raise RuntimeError("GradientTape.gradient can only be called once on "
@@ -887,6 +898,12 @@ class GradientTape(object):
                             "gradient in order to compute higher order "
                             "derrivatives.", 1)
 
+    flat_targets = nest.flatten(target)
+    for t in flat_targets:
+      if resource_variable_ops.is_resource_variable(t):
+        raise ValueError("GradientTape.gradient is not supported for variable "
+                         "targets.")
+
     flat_sources = nest.flatten(sources)
     flat_sources = [_handle_or_self(x) for x in flat_sources]
 
@@ -896,9 +913,10 @@ class GradientTape(object):
 
     flat_grad = imperative_grad.imperative_grad(
         self._tape,
-        nest.flatten(target),
+        flat_targets,
         flat_sources,
-        output_gradients=output_gradients)
+        output_gradients=output_gradients,
+        unconnected_gradients=unconnected_gradients)
 
     if not self._persistent:
       self._tape = None
