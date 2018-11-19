@@ -22,6 +22,9 @@ from __future__ import print_function
 
 import abc
 
+import six
+
+from tensorflow.python.distribute import reduce_util as ds_reduce_util
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
@@ -40,6 +43,7 @@ from tensorflow.python.training.checkpointable import base as checkpointable
 from tensorflow.python.util import nest
 
 
+@six.add_metaclass(abc.ABCMeta)
 class _OptimizableVariable(object):
   """Interface for abstracting over variables in the optimizers."""
 
@@ -658,7 +662,7 @@ class OptimizerV2(optimizer_v1.Optimizer):
                name=None,
                grad_loss=None,
                stop_gradients=None,
-               scale_loss_by_num_towers=None):
+               scale_loss_by_num_replicas=None):
     """Add operations to minimize `loss` by updating `var_list`.
 
     This method simply combines calls `compute_gradients()` and
@@ -683,8 +687,8 @@ class OptimizerV2(optimizer_v1.Optimizer):
       grad_loss: Optional. A `Tensor` holding the gradient computed for `loss`.
       stop_gradients: Optional. A Tensor or list of tensors not to differentiate
         through.
-      scale_loss_by_num_towers: Optional boolean. If true, scale the loss down
-        by the number of towers. By default, auto-detects whether this is
+      scale_loss_by_num_replicas: Optional boolean. If true, scale the loss down
+        by the number of replicas. By default, auto-detects whether this is
         needed.
 
     Returns:
@@ -713,7 +717,7 @@ class OptimizerV2(optimizer_v1.Optimizer):
         colocate_gradients_with_ops=colocate_gradients_with_ops,
         grad_loss=grad_loss,
         stop_gradients=stop_gradients,
-        scale_loss_by_num_towers=scale_loss_by_num_towers)
+        scale_loss_by_num_replicas=scale_loss_by_num_replicas)
 
     vars_with_grad = [v for g, v in grads_and_vars if g is not None]
     if not vars_with_grad:
@@ -733,7 +737,7 @@ class OptimizerV2(optimizer_v1.Optimizer):
                         colocate_gradients_with_ops=False,
                         grad_loss=None,
                         stop_gradients=None,
-                        scale_loss_by_num_towers=None):
+                        scale_loss_by_num_replicas=None):
     """Compute gradients of `loss` for the variables in `var_list`.
 
     This is the first part of `minimize()`.  It returns a list
@@ -758,8 +762,8 @@ class OptimizerV2(optimizer_v1.Optimizer):
       grad_loss: Optional. A `Tensor` holding the gradient computed for `loss`.
       stop_gradients: Optional. A Tensor or list of tensors not to differentiate
         through.
-      scale_loss_by_num_towers: Optional boolean. If true, scale the loss down
-        by the number of towers. By default, auto-detects whether this is
+      scale_loss_by_num_replicas: Optional boolean. If true, scale the loss down
+        by the number of replicas. By default, auto-detects whether this is
         needed.
 
     Returns:
@@ -784,17 +788,10 @@ class OptimizerV2(optimizer_v1.Optimizer):
           tape.watch(var_list)
         loss_value = loss()
 
-        # Scale loss for number of towers (callable-loss case). In this case,
+        # Scale loss for number of replicas (callable-loss case). In this case,
         # we have to be careful to call distribute_lib.get_loss_reduction()
         # *after* loss() is evaluated, so we know what loss reduction it uses.
-        if scale_loss_by_num_towers is None:
-          scale_loss_by_num_towers = (
-              distribute_lib.get_loss_reduction() == variable_scope
-              .VariableAggregation.MEAN)
-        if scale_loss_by_num_towers:
-          num_replicas = distribute_ctx.get_distribution_strategy().num_replicas
-          if num_replicas > 1:
-            loss_value *= 1. / num_replicas
+        loss_value = self._scale_loss(loss_value, scale_loss_by_num_replicas)
 
       if var_list is None:
         var_list = tape.watched_variables()
@@ -805,14 +802,7 @@ class OptimizerV2(optimizer_v1.Optimizer):
                          "be a function when eager execution is enabled.")
 
     # Scale loss for number of replicas (non-callable-loss case).
-    if scale_loss_by_num_towers is None:
-      scale_loss_by_num_towers = (
-          distribute_lib.get_loss_reduction() == variable_scope
-          .VariableAggregation.MEAN)
-    if scale_loss_by_num_towers:
-      num_replicas = distribute_ctx.get_distribution_strategy().num_replicas
-      if num_replicas > 1:
-        loss *= 1. / num_replicas
+    loss = self._scale_loss(loss, scale_loss_by_num_replicas)
 
     if gate_gradients not in [
         optimizer_v1.Optimizer.GATE_NONE, optimizer_v1.Optimizer.GATE_OP,
@@ -854,6 +844,19 @@ class OptimizerV2(optimizer_v1.Optimizer):
     ])
     return grads_and_vars
 
+  @staticmethod
+  def _scale_loss(loss_value, scale_loss_by_num_replicas):
+    """Scale loss for the number of replicas."""
+    if scale_loss_by_num_replicas is None:
+      scale_loss_by_num_replicas = (
+          distribute_lib.get_loss_reduction() == ds_reduce_util.ReduceOp.MEAN)
+    if scale_loss_by_num_replicas:
+      num_replicas = \
+        distribute_ctx.get_distribution_strategy().num_replicas_in_sync
+      if num_replicas > 1:
+        loss_value *= 1. / num_replicas
+    return loss_value
+
   def apply_gradients(self, grads_and_vars, global_step=None, name=None):
     """Apply gradients to variables.
 
@@ -889,7 +892,8 @@ class OptimizerV2(optimizer_v1.Optimizer):
       raise ValueError("No gradients provided for any variable: %s." %
                        ([str(v) for _, v in grads_and_vars],))
     return distribute_ctx.get_replica_context().merge_call(
-        self._distributed_apply, filtered, global_step=global_step, name=name)
+        self._distributed_apply, args=(filtered,),
+        kwargs={"global_step": global_step, "name": name})
 
   def _get_or_create_state(self, var_list=None):
     """Either looks up or creates `_OptimizerV2State`.
@@ -925,7 +929,7 @@ class OptimizerV2(optimizer_v1.Optimizer):
   def _distributed_apply(self, distribution, grads_and_vars, global_step, name):
     """`apply_gradients` for use with a `DistributionStrategy`."""
     reduced_grads = distribution.batch_reduce(
-        variable_scope.VariableAggregation.SUM, grads_and_vars)
+        ds_reduce_util.ReduceOp.SUM, grads_and_vars)
     var_list = [v for _, v in grads_and_vars]
     grads_and_vars = zip(reduced_grads, var_list)
 

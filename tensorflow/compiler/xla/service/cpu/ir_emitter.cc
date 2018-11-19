@@ -1536,7 +1536,8 @@ IrEmitter::ReductionGenerator IrEmitter::MatchReductionGenerator(
 
     case HloOpcode::kMaximum:
       return [root_is_floating_point, root_is_signed](
-                 llvm::IRBuilder<>* b, llvm::Value* lhs, llvm::Value* rhs) {
+                 llvm::IRBuilder<>* b, llvm::Value* lhs,
+                 llvm::Value* rhs) -> llvm::Value* {
         if (root_is_floating_point) {
           return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::maxnum,
                                               {lhs, rhs}, {lhs->getType()}, b);
@@ -1551,7 +1552,8 @@ IrEmitter::ReductionGenerator IrEmitter::MatchReductionGenerator(
 
     case HloOpcode::kMinimum:
       return [root_is_floating_point, root_is_signed](
-                 llvm::IRBuilder<>* b, llvm::Value* lhs, llvm::Value* rhs) {
+                 llvm::IRBuilder<>* b, llvm::Value* lhs,
+                 llvm::Value* rhs) -> llvm::Value* {
         if (root_is_floating_point) {
           return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::minnum,
                                               {lhs, rhs}, {lhs->getType()}, b);
@@ -2206,16 +2208,16 @@ Status IrEmitter::HandleFusion(HloInstruction* fusion) {
     VLOG(3) << "HandleFusion FusedDynamicUpdateSliceInPlace";
     CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
     TF_RETURN_IF_ERROR(EmitTargetAddressForOp(fusion));
-
     // Delegate to common implementation of fused in-place dynamic-update-slice.
-    auto operands = GetIrArraysForOperandsOf(fusion);
     return llvm_ir::EmitFusedDynamicUpdateSliceInPlace(
-        fusion, operands, GetIrArrayFor(fusion), &elemental_emitter, &b_);
+        fusion, GetGeneratorForOperandIrArrays(fusion), GetIrArrayFor(fusion),
+        &elemental_emitter, &b_);
   } else if (fusion->fusion_kind() == HloInstruction::FusionKind::kLoop) {
     VLOG(3) << "HandleFusion kLoop";
     CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
     auto operands = GetIrArraysForOperandsOf(fusion);
-    FusedIrEmitter fused_emitter(operands, &elemental_emitter);
+    FusedIrEmitter fused_emitter(GetGeneratorForOperandIrArrays(fusion),
+                                 &elemental_emitter);
     TF_RETURN_IF_ERROR(fusion->fused_expression_root()->Accept(&fused_emitter));
 
     return EmitTargetElementLoop(fusion, fused_emitter.GetRootGenerator());
@@ -2415,13 +2417,7 @@ StatusOr<bool> IrEmitter::EmitFastConcatenate(
       *failure_reason = "operand has mismatching layouts";
       return false;
     }
-    if (LayoutUtil::IsPadded(op->shape())) {
-      *failure_reason = "operand has padded layout";
-      return false;
-    }
   }
-
-  CHECK(!LayoutUtil::IsPadded(concatenate->shape()));
 
   // We split the dimensions into three categories: the dimension over which we
   // are concatenating (concat_dim), the dimensions that are minor to it

@@ -174,6 +174,20 @@ tf_py_test(
 )
 
 tf_py_test(
+    name = "inputs_test",
+    size = "small",
+    srcs = ["inputs_test.py"],
+    additional_deps = [
+        ":test_base",
+        "@absl_py//absl/testing:parameterized",
+        "//third_party/py/numpy",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:sparse_tensor",
+        "//tensorflow/python/data/ops:dataset_ops",
+    ],
+)
+
+tf_py_test(
     name = "interleave_dataset_op_test",
     size = "small",
     srcs = ["interleave_dataset_op_test.py"],
@@ -198,12 +212,13 @@ cuda_py_test(
     size = "small",
     srcs = ["iterator_ops_test.py"],
     additional_deps = [
+        "@absl_py//absl/testing:parameterized",
         "//third_party/py/numpy",
         "//tensorflow/python/data/ops:readers",
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:iterator_ops",
-        "//tensorflow/python/data/util:sparse",
+        "//tensorflow/python/data/util:structure",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/training/checkpointable:util",
         "//tensorflow/python:array_ops",

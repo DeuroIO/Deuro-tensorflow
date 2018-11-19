@@ -700,7 +700,6 @@ TEST_F(FunctionOptimizerTest, InlineSymbolicGradient_NoInlineFunc) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeFunctionXTimesTwo) {
-  using str_util::StartsWith;
   using test::function::NDef;
 
   FunctionOptimizer optimizer(RewriterConfig::DEFAULT);
@@ -712,6 +711,7 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionXTimesTwo) {
 
   // Build a graph to compute y = XTimesTwo(x).
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("x", "Placeholder", {}, {{"dtype", DT_FLOAT}}, kDevice),
        NDef("y", "XTimesTwo", {"x"}, {{"T", DT_FLOAT}}, kDevice),
@@ -724,14 +724,14 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionXTimesTwo) {
   // Make sure that specialized function was added to the library and original
   // function was removed.
   EXPECT_EQ(1, output.library().function_size());
-  EXPECT_TRUE(StartsWith(output.library().function(0).signature().name(),
-                         "XTimesTwo_specialized_for_y"));
+  EXPECT_EQ("XTimesTwo_specialized_for_y_at_tf_graph",
+            output.library().function(0).signature().name());
 
   // And 'y' node is calling specialized function.
   int count = 0;
   for (const NodeDef& node : output.node()) {
     if (node.name() == "y" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "XTimesTwo_specialized_for_y"));
+      EXPECT_EQ("XTimesTwo_specialized_for_y_at_tf_graph", node.op());
     }
   }
   EXPECT_EQ(1, count);
@@ -748,7 +748,6 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionXTimesTwo) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionXTimesTwo) {
-  using str_util::StartsWith;
   using test::function::NDef;
   using FDH = FunctionDefHelper;
 
@@ -762,6 +761,7 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionXTimesTwo) {
   // Tensorflow graph:
   //   y = PartitionedCall[f=XTimesTwo, Tin=[DT_FLOAT], Tout=[DT_FLOAT]](x)
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("x", "Placeholder", {}, {{"dtype", DT_FLOAT}}, kDevice),
        NDef("y", "PartitionedCall", {"x"},
@@ -778,8 +778,8 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionXTimesTwo) {
   // Make sure that specialized function was added to the library and original
   // function was removed.
   EXPECT_EQ(1, output.library().function_size());
-  EXPECT_TRUE(StartsWith(output.library().function(0).signature().name(),
-                         "XTimesTwo_specialized_for_y"));
+  EXPECT_EQ("XTimesTwo_specialized_for_y_at_tf_graph",
+            output.library().function(0).signature().name());
 
   // And 'y' node is calling specialized function.
   int count = 0;
@@ -788,7 +788,7 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionXTimesTwo) {
       EXPECT_EQ("PartitionedCall", node.op());
       auto& func = AttrSlice(node).Find("f")->func();
       // Function calls into the specialized function.
-      EXPECT_TRUE(StartsWith(func.name(), "XTimesTwo_specialized_for_y"));
+      EXPECT_EQ("XTimesTwo_specialized_for_y_at_tf_graph", func.name());
       // And input/output types stay the same.
       auto& tin = AttrSlice(node).Find("Tin")->list();
       auto& tout = AttrSlice(node).Find("Tout")->list();
@@ -812,7 +812,6 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionXTimesTwo) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeFunctionPushDownConstInput) {
-  using str_util::StartsWith;
   using test::function::NDef;
 
   FunctionOptimizer optimizer(RewriterConfig::DEFAULT);
@@ -831,6 +830,7 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionPushDownConstInput) {
   const Tensor kTwo = test::AsScalar<float>(2.0);
 
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("x", "Placeholder", {}, {{"dtype", DT_FLOAT}}, kDevice),
        NDef("init", "NoOp", {}, {}, kDevice),
@@ -848,9 +848,9 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionPushDownConstInput) {
   ASSERT_EQ(1, output.library().function_size());
 
   const FunctionDef& specialized = output.library().function(0);
-  const OpDef& signature = specialized.signature();
-  EXPECT_TRUE(StartsWith(signature.name(), "MyMul_specialized_for_y"));
-  EXPECT_EQ(1, signature.input_arg_size());
+  EXPECT_EQ("MyMul_specialized_for_y_at_tf_graph",
+            specialized.signature().name());
+  EXPECT_EQ(1, specialized.signature().input_arg_size());
 
   // And 'y' node has control dependencies of a pushed down const node.
   int count = 0;
@@ -875,7 +875,6 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionPushDownConstInput) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionPushDownConstInput) {
-  using str_util::StartsWith;
   using test::function::NDef;
   using FDH = FunctionDefHelper;
 
@@ -896,6 +895,7 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionPushDownConstInput) {
   // Tensorflow graph:
   //   y = PartitionedCall[Tin=[DT_FLOAT], Tout=[DT_FLOAT], f=MyMul](x, two)
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("x", "Placeholder", {}, {{"dtype", DT_FLOAT}}, kDevice),
        NDef("init", "NoOp", {}, {}, kDevice),
@@ -917,9 +917,9 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionPushDownConstInput) {
   ASSERT_EQ(1, output.library().function_size());
 
   const FunctionDef& specialized = output.library().function(0);
-  const OpDef& signature = specialized.signature();
-  EXPECT_TRUE(StartsWith(signature.name(), "MyMul_specialized_for_y"));
-  EXPECT_EQ(1, signature.input_arg_size());
+  EXPECT_EQ("MyMul_specialized_for_y_at_tf_graph",
+            specialized.signature().name());
+  EXPECT_EQ(1, specialized.signature().input_arg_size());
 
   // And 'y' node has control dependencies of a pushed down const node.
   int count = 0;
@@ -931,7 +931,7 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionPushDownConstInput) {
       EXPECT_EQ("^init", node.input(1));
       // Function calls into the specialized function.
       auto& func = AttrSlice(node).Find("f")->func();
-      EXPECT_TRUE(StartsWith(func.name(), "MyMul_specialized_for_y"));
+      EXPECT_EQ("MyMul_specialized_for_y_at_tf_graph", func.name());
       // And input/output type lists were updated.
       auto& tin = AttrSlice(node).Find("Tin")->list();
       auto& tout = AttrSlice(node).Find("Tout")->list();
@@ -955,7 +955,6 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionPushDownConstInput) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeFunction_OncePerUniqueContext) {
-  using str_util::StartsWith;
   using test::function::NDef;
 
   FunctionOptimizer optimizer(RewriterConfig::DEFAULT);
@@ -973,6 +972,7 @@ TEST_F(FunctionOptimizerTest, SpecializeFunction_OncePerUniqueContext) {
   const Tensor kThree = test::AsScalar<float>(3.0);
 
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("init", "NoOp", {}, {}, kDevice),
 
@@ -1019,31 +1019,31 @@ TEST_F(FunctionOptimizerTest, SpecializeFunction_OncePerUniqueContext) {
   int count = 0;
   for (const NodeDef& node : output.node()) {
     if (node.name() == "mul_1" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_1"));
+      EXPECT_EQ("MyMul_specialized_for_mul_1_at_tf_graph", node.op());
       ASSERT_EQ(2, node.input_size());
       EXPECT_EQ("xf", node.input(0));
       EXPECT_EQ("yf", node.input(1));
 
     } else if (node.name() == "mul_2" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_1"));
+      EXPECT_EQ("MyMul_specialized_for_mul_1_at_tf_graph", node.op());
       ASSERT_EQ(2, node.input_size());
       EXPECT_EQ("yf", node.input(0));
       EXPECT_EQ("xf", node.input(1));
 
     } else if (node.name() == "mul_3" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_3"));
+      EXPECT_EQ("MyMul_specialized_for_mul_3_at_tf_graph", node.op());
       ASSERT_EQ(2, node.input_size());
       EXPECT_EQ("xi", node.input(0));
       EXPECT_EQ("yi", node.input(1));
 
     } else if (node.name() == "mul_4" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_4"));
+      EXPECT_EQ("MyMul_specialized_for_mul_4_at_tf_graph", node.op());
       ASSERT_EQ(2, node.input_size());
       EXPECT_EQ("xf", node.input(0));
       EXPECT_EQ("^init", node.input(1));
 
     } else if (node.name() == "mul_5" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_4"));
+      EXPECT_EQ("MyMul_specialized_for_mul_4_at_tf_graph", node.op());
       ASSERT_EQ(3, node.input_size());
       EXPECT_EQ("yf", node.input(0));
       gtl::FlatSet<string> expected_ctrl = {"^init", "^xf"};
@@ -1051,7 +1051,7 @@ TEST_F(FunctionOptimizerTest, SpecializeFunction_OncePerUniqueContext) {
       EXPECT_EQ(expected_ctrl, actual_ctrl);
 
     } else if (node.name() == "mul_6" && ++count) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyMul_specialized_for_mul_6"));
+      EXPECT_EQ("MyMul_specialized_for_mul_6_at_tf_graph", node.op());
       ASSERT_EQ(2, node.input_size());
       EXPECT_EQ("xf", node.input(0));
       EXPECT_EQ("^init", node.input(1));
@@ -1077,7 +1077,6 @@ TEST_F(FunctionOptimizerTest, SpecializeFunction_OncePerUniqueContext) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeFunctionForUsedOutputTensors) {
-  using str_util::StartsWith;
   using test::function::NDef;
 
   FunctionOptimizer optimizer(RewriterConfig::DEFAULT);
@@ -1094,6 +1093,7 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionForUsedOutputTensors) {
   std::vector<FunctionDef> function_library = {my_func};
 
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("init", "NoOp", {}, {}, kDevice),
 
@@ -1141,17 +1141,17 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionForUsedOutputTensors) {
   for (const NodeDef& node : output.node()) {
     // All function caller nodes must be specialized.
     if (node.name() == "fn1" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn1"));
+      EXPECT_EQ("MyFunc_specialized_for_fn1_at_tf_graph", node.op());
     } else if (node.name() == "fn2" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn2"));
+      EXPECT_EQ("MyFunc_specialized_for_fn2_at_tf_graph", node.op());
     } else if (node.name() == "fn3" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn3"));
+      EXPECT_EQ("MyFunc_specialized_for_fn3_at_tf_graph", node.op());
     } else if (node.name() == "fn4" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn4"));
+      EXPECT_EQ("MyFunc_specialized_for_fn4_at_tf_graph", node.op());
     } else if (node.name() == "fn5" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn5"));
+      EXPECT_EQ("MyFunc_specialized_for_fn5_at_tf_graph", node.op());
     } else if (node.name() == "fn6" && ++found) {
-      EXPECT_TRUE(StartsWith(node.op(), "MyFunc_specialized_for_fn6"));
+      EXPECT_EQ("MyFunc_specialized_for_fn6_at_tf_graph", node.op());
     }
     // And all consumers of specialized function nodes must be mapped to new
     // output ports.
@@ -1184,7 +1184,6 @@ TEST_F(FunctionOptimizerTest, SpecializeFunctionForUsedOutputTensors) {
 }
 
 TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionForUsedOutputTensors) {
-  using str_util::StartsWith;
   using test::function::NDef;
   using FDH = FunctionDefHelper;
 
@@ -1202,6 +1201,7 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionForUsedOutputTensors) {
   std::vector<FunctionDef> function_library = {my_func};
 
   GrapplerItem item;
+  item.id = "tf_graph";
   item.graph = test::function::GDef(
       {NDef("init", "NoOp", {}, {}, kDevice),
 
@@ -1276,42 +1276,42 @@ TEST_F(FunctionOptimizerTest, SpecializeIndirectFunctionForUsedOutputTensors) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn1"));
+      EXPECT_EQ("MyFunc_specialized_for_fn1_at_tf_graph", func.name());
       ASSERT_EQ(3, tout.type_size());
 
     } else if (node.name() == "fn2" && ++found) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn2"));
+      EXPECT_EQ("MyFunc_specialized_for_fn2_at_tf_graph", func.name());
       ASSERT_EQ(1, tout.type_size());
 
     } else if (node.name() == "fn3" && ++found) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn3"));
+      EXPECT_EQ("MyFunc_specialized_for_fn3_at_tf_graph", func.name());
       ASSERT_EQ(1, tout.type_size());
 
     } else if (node.name() == "fn4" && ++found) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn4"));
+      EXPECT_EQ("MyFunc_specialized_for_fn4_at_tf_graph", func.name());
       ASSERT_EQ(1, tout.type_size());
 
     } else if (node.name() == "fn5" && ++found) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn5"));
+      EXPECT_EQ("MyFunc_specialized_for_fn5_at_tf_graph", func.name());
       ASSERT_EQ(2, tout.type_size());
 
     } else if (node.name() == "fn6" && ++found) {
       auto& func = AttrSlice(node).Find("f")->func();
       auto& tout = AttrSlice(node).Find("Tout")->list();
       EXPECT_EQ("PartitionedCall", node.op());
-      EXPECT_TRUE(StartsWith(func.name(), "MyFunc_specialized_for_fn6"));
+      EXPECT_EQ("MyFunc_specialized_for_fn6_at_tf_graph", func.name());
       ASSERT_EQ(0, tout.type_size());
     }
     // And all consumers of specialized function nodes must be mapped to new

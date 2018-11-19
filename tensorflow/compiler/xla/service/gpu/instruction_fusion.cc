@@ -47,6 +47,7 @@ bool IsFusible(const HloInstruction& hlo) {
          hlo.opcode() == HloOpcode::kReduce ||
          hlo.opcode() == HloOpcode::kReduceWindow ||
          hlo.opcode() == HloOpcode::kReshape ||
+         hlo.opcode() == HloOpcode::kReverse ||
          hlo.opcode() == HloOpcode::kScatter ||
          hlo.opcode() == HloOpcode::kSlice ||
          hlo.opcode() == HloOpcode::kTranspose;
@@ -179,6 +180,10 @@ bool GpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
           IsIEEEFloatingPointScalarConstant(alpha->operand(0))) {
         return true;
       }
+    } else if (consumer->operand_count() == 2 &&
+               consumer->opcode() == HloOpcode::kAdd) {
+      // Fuse a bias add into the output of the dot.
+      return true;
     }
   }
 

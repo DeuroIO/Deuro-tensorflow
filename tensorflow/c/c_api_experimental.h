@@ -202,6 +202,22 @@ TF_CAPI_EXPORT extern void TF_AttrBuilderSetTypeList(TF_AttrBuilder* builder,
 TF_CAPI_EXPORT extern void TF_AttrBuilderCheckCanRunOnDevice(
     TF_AttrBuilder* builder, const char* device_type, TF_Status* status);
 
+// For argument number input_index, fetch the corresponding number_attr that
+// needs to be updated with the argument length of the input list.
+// Returns nullptr if there is any problem like op_name is not found, or the
+// argument does not support this attribute type.
+TF_CAPI_EXPORT extern const char* TF_GetNumberAttrForOpListInput(
+    const char* op_name, int input_index, TF_Status* status);
+
+// Returns 1 if the op is stateful, 0 otherwise. The return value is undefined
+// if the status is not ok.
+TF_CAPI_EXPORT extern int TF_OpIsStateful(const char* op_type,
+                                          TF_Status* status);
+
+// Platform specific initialization routine. Very few platforms actually require
+// this to be called.
+TF_CAPI_EXPORT void TF_InitMain(const char* usage, int* argc, char*** argv);
+
 #ifdef __cplusplus
 } /* end extern "C" */
 #endif

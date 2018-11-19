@@ -22,6 +22,9 @@ from __future__ import print_function
 
 import abc
 
+import six
+
+from tensorflow.python.distribute import reduce_util as ds_reduce_util
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
@@ -84,6 +87,7 @@ def _var_key(var):
   return var._unique_id  # pylint: disable=protected-access
 
 
+@six.add_metaclass(abc.ABCMeta)
 class _OptimizableVariable(object):
   """Interface for abstracting over variables in the optimizers."""
 
@@ -462,11 +466,7 @@ class Optimizer(
         # Have to be careful to call distribute_lib.get_loss_reduction()
         # *after* loss() is evaluated, so we know what loss reduction it uses.
         # TODO(josh11b): Test that we handle weight decay in a reasonable way.
-        if (distribute_lib.get_loss_reduction() ==
-            variable_scope.VariableAggregation.MEAN):
-          num_replicas = distribute_ctx.get_distribution_strategy().num_replicas
-          if num_replicas > 1:
-            loss_value *= (1. / num_replicas)
+        loss_value = self._scale_loss(loss_value)
 
       if var_list is None:
         var_list = tape.watched_variables()
@@ -483,11 +483,7 @@ class Optimizer(
           "be a function when eager execution is enabled.")
 
     # Scale loss if using a "mean" loss reduction and multiple replicas.
-    if (distribute_lib.get_loss_reduction() ==
-        variable_scope.VariableAggregation.MEAN):
-      num_replicas = distribute_ctx.get_distribution_strategy().num_replicas
-      if num_replicas > 1:
-        loss *= (1. / num_replicas)
+    loss = self._scale_loss(loss)
 
     if gate_gradients not in [Optimizer.GATE_NONE, Optimizer.GATE_OP,
                               Optimizer.GATE_GRAPH]:
@@ -522,6 +518,15 @@ class Optimizer(
         [v for g, v in grads_and_vars
          if g is not None and v.dtype != dtypes.resource])
     return grads_and_vars
+
+  @staticmethod
+  def _scale_loss(loss_value):
+    if distribute_lib.get_loss_reduction() == ds_reduce_util.ReduceOp.MEAN:
+      num_replicas = \
+        distribute_ctx.get_distribution_strategy().num_replicas_in_sync
+      if num_replicas > 1:
+        loss_value *= (1. / num_replicas)
+    return loss_value
 
   def apply_gradients(self, grads_and_vars, global_step=None, name=None):
     """Apply gradients to variables.
@@ -560,7 +565,7 @@ class Optimizer(
     if distribute_ctx.has_distribution_strategy():
       grads_and_vars = get_filtered_grad_fn(lambda: grads_and_vars)()
       return distribute_ctx.get_replica_context().merge_call(
-          self._distributed_apply, grads_and_vars, global_step, name)
+          self._distributed_apply, args=(grads_and_vars, global_step, name))
 
     # No DistributionStrategy case.
     grads_and_vars = tuple(grads_and_vars)  # Make sure repeat iteration works.
@@ -653,10 +658,10 @@ class Optimizer(
     Returns:
       An `Operation` that applies the specified gradients across all
       replicas. If `global_step` was not None, that operation also
-      increments `global_step`.
+      increments `global_step`
     """
     reduced_grads = distribution.batch_reduce(
-        variable_scope.VariableAggregation.SUM, grads_and_vars)
+        ds_reduce_util.ReduceOp.SUM, grads_and_vars)
     var_list = [v for _, v in grads_and_vars]
     grads_and_vars = zip(reduced_grads, var_list)
     # Note that this is called in a cross-replica context.

@@ -206,11 +206,18 @@ bool IsExit(const NodeDef& node) {
 
 bool IsExp(const NodeDef& node) { return node.op() == "Exp"; }
 
+bool IsFakeParam(const NodeDef& node) { return node.op() == "FakeParam"; }
+
 bool IsFill(const NodeDef& node) { return node.op() == "Fill"; }
 
 bool IsFloorDiv(const NodeDef& node) { return node.op() == "FloorDiv"; }
 
 bool IsFloorMod(const NodeDef& node) { return node.op() == "FloorMod"; }
+
+bool IsFusedBatchNorm(const NodeDef& node) {
+  const auto& op = node.op();
+  return op == "FusedBatchNorm" || op == "FusedBatchNormV2";
+}
 
 bool IsFusedBatchNormGrad(const NodeDef& node) {
   const auto& op = node.op();
@@ -245,6 +252,10 @@ bool IsIgamma(const NodeDef& node) { return node.op() == "Igamma"; }
 bool IsIgammac(const NodeDef& node) { return node.op() == "Igammac"; }
 
 bool IsImag(const NodeDef& node) { return node.op() == "Imag"; }
+
+bool IsImmutableConst(const NodeDef& node) {
+  return node.op() == "ImmutableConst";
+}
 
 bool IsInvGrad(const NodeDef& node) { return node.op() == "InvGrad"; }
 
@@ -356,6 +367,8 @@ bool IsReduction(const NodeDef& node) {
   return op == "Sum" || op == "Prod" || op == "Min" || op == "Max" ||
          op == "Mean" || op == "Any" || op == "All";
 }
+
+bool IsRelu(const NodeDef& node) { return node.op() == "Relu"; }
 
 bool IsReluGrad(const NodeDef& node) { return node.op() == "ReluGrad"; }
 
@@ -560,6 +573,10 @@ bool IsFreeOfSideEffect(const NodeDef& node) {
   }
   // Queue ops modify the queue which is a side effect.
   if (node.op().find("Queue") != string::npos) {
+    return false;
+  }
+  // Sending a tensor via a network is a side effect.
+  if (IsSend(node)) {
     return false;
   }
   return !ModifiesInputsInPlace(node);

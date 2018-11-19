@@ -45,10 +45,10 @@ _GENERATED_FILE_HEADER = """# This file is MACHINE GENERATED! Do not edit.
 \"\"\"%s
 \"\"\"
 
-from __future__ import print_function
+from __future__ import print_function as _print_function
 
 """
-_GENERATED_FILE_FOOTER = '\n\ndel print_function\n'
+_GENERATED_FILE_FOOTER = '\n\ndel _print_function\n'
 
 
 class SymbolExposedTwiceError(Exception):
@@ -299,7 +299,8 @@ def get_api_init_text(packages,
         module.__name__ is None or not in_packages(module.__name__)):
       continue
     # Do not generate __init__.py files for contrib modules for now.
-    if '.contrib.' in module.__name__ or module.__name__.endswith('.contrib'):
+    if (('.contrib.' in module.__name__ or module.__name__.endswith('.contrib'))
+        and '.lite' not in module.__name__):
       continue
 
     for module_contents_name in dir(module):

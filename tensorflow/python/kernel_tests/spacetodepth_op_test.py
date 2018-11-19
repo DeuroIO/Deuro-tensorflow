@@ -36,12 +36,12 @@ class SpaceToDepthTest(test.TestCase):
 
   def _testOne(self, inputs, block_size, outputs, dtype=dtypes.float32):
     input_nhwc = math_ops.cast(inputs, dtype)
-    with self.cached_session(use_gpu=False):
+    with self.session(use_gpu=False):
       # test NHWC (default) on CPU
       x_tf = array_ops.space_to_depth(input_nhwc, block_size)
       self.assertAllEqual(x_tf.eval(), outputs)
     if test.is_gpu_available():
-      with self.cached_session(use_gpu=True):
+      with self.session(force_gpu=True):
         # test NHWC (default) on GPU
         x_tf = array_ops.space_to_depth(input_nhwc, block_size)
         self.assertAllEqual(x_tf.eval(), outputs)
@@ -56,13 +56,9 @@ class SpaceToDepthTest(test.TestCase):
     x_np = [[[[1], [2]], [[3], [4]]]]
     block_size = 2
     x_out = [[[[1, 2, 3, 4]]]]
-    self._testOne(x_np, block_size, x_out)
+    for dtype in [dtypes.float32, dtypes.float16, dtypes.uint8]:
+      self._testOne(x_np, block_size, x_out, dtype=dtype)
 
-  def testBasicFloat16(self):
-    x_np = [[[[1], [2]], [[3], [4]]]]
-    block_size = 2
-    x_out = [[[[1, 2, 3, 4]]]]
-    self._testOne(x_np, block_size, x_out, dtype=dtypes.float16)
 
   # Tests for larger input dimensions. To make sure elements are
   # correctly ordered spatially.
@@ -142,13 +138,13 @@ class SpaceToDepthTest(test.TestCase):
       # test NHWC (default) on CPU
       x_tf = array_ops.space_to_depth(input_nhwc, block_size)
       self.assertAllEqual(x_tf.shape, x_out.shape)
-      x_tf.eval()
+      self.evaluate(x_tf)
     if test.is_gpu_available():
       with self.session(use_gpu=True):
         # test NHWC (default) on GPU
         x_tf = array_ops.space_to_depth(input_nhwc, block_size)
         self.assertAllEqual(x_tf.shape, x_out.shape)
-        x_tf.eval()
+        self.evaluate(x_tf)
 
   # Tests for different width and height.
   def testNonSquare(self):
@@ -167,7 +163,7 @@ class SpaceToDepthTest(test.TestCase):
     block_size = 2
     with self.assertRaises(ValueError):
       out_tf = array_ops.space_to_depth(x_np, block_size)
-      out_tf.eval()
+      self.evaluate(out_tf)
 
   def testInputWrongDimMissingBatch(self):
     # The input is missing the first dimension ("batch")
@@ -182,7 +178,7 @@ class SpaceToDepthTest(test.TestCase):
     block_size = 0
     with self.assertRaises(ValueError):
       out_tf = array_ops.space_to_depth(x_np, block_size)
-      out_tf.eval()
+      self.evaluate(out_tf)
 
   def testBlockSizeOne(self):
     # The block size is 1. The block size needs to be > 1.
@@ -190,7 +186,7 @@ class SpaceToDepthTest(test.TestCase):
     block_size = 1
     with self.assertRaises(ValueError):
       out_tf = array_ops.space_to_depth(x_np, block_size)
-      out_tf.eval()
+      self.evaluate(out_tf)
 
   def testBlockSizeLarger(self):
     # The block size is too large for this input.
@@ -198,7 +194,7 @@ class SpaceToDepthTest(test.TestCase):
     block_size = 10
     with self.assertRaises(ValueError):
       out_tf = array_ops.space_to_depth(x_np, block_size)
-      out_tf.eval()
+      self.evaluate(out_tf)
 
   def testBlockSizeNotDivisibleWidth(self):
     # The block size divides width but not height.
